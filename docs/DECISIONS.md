@@ -3,6 +3,19 @@
 Agreed on 2026-10-18 after the spec review. Where this file and
 [MOCKBUDDY_SPEC.md](../MOCKBUDDY_SPEC.md) disagree, this file wins.
 
+## Deployment and phase gates
+
+- Until GitHub and Vercel are set up, each phase is verified locally and committed locally.
+- Phase 0 is green, locally, when:
+  - `npm run dev` serves the app with `.env.local` pointing at the real Supabase project;
+  - the home page shows the Supabase pooler host, not a missing-variable error;
+  - a row written on the home page reads back from the real Supabase database (not PGlite);
+  - the Supabase Table Editor shows all 7 tables with RLS enabled;
+  - `npm run build`, `npm run lint` and `npm run typecheck` pass.
+- GitHub and Vercel deployment must be done before Phase 3 tuning. The 60-second
+  serverless timeout doesn't exist locally, so the generation pipeline (batch timing,
+  parallelism, effort levels) can't be sized without measuring it on Vercel.
+
 ## Generation pipeline
 
 - Draft, critique and revise stay three separate model calls. Each runs in its own HTTP
