@@ -8,9 +8,9 @@ Agreed on 2026-10-18 after the spec review. Where this file and
 - Draft, critique and revise stay three separate model calls. Each runs in its own HTTP
   request (`/api/generate` with a `stage`), with the state between stages saved in the
   database. Every AI route keeps `maxDuration = 60`.
-- Batches of 5 run **in parallel** from the client. `exams.plan` assigns every slot its
-  type, section, marks and chunk(s) up front, so batches don't depend on each other.
-  Target: under 60 s wall clock for a 20-question mock.
+- Batches of 5 run **in parallel** from the client, 4 at a time to start with (see Rate
+  limits). `exams.plan` assigns every slot its type, section, marks and chunk(s) up front,
+  so batches don't depend on each other. For the wall-clock target, see Timing.
 - Consequence, accepted: the draft call doesn't see stems from other batches of the same
   exam. Cross-batch dedup relies on chunk rotation, a server-side word-overlap check and
   the critique pass. Stems from the previous exam chain and the sample exam are still
@@ -26,6 +26,30 @@ Agreed on 2026-10-18 after the spec review. Where this file and
   can't express. Stripping stray fences stays as a guard.
 - `stop_reason` of `refusal` or `max_tokens` is reported as its own failure. The API's
   server-side refusal fallback (`fallbacks: "default"`) is on.
+
+## Rate limits
+
+- Every model call retries HTTP 429 with exponential backoff plus jitter, and waits for the
+  `retry-after` header when the API sends one. The SDK's built-in retries are off
+  (`maxRetries: 0`) so one wrapper owns retrying and can count it. Because that also
+  removes the SDK's retries for overloaded (529) and 5xx responses, those use the same
+  backoff.
+- Backoff never sleeps past the request's 60 s budget. If the next wait would overrun it,
+  the stage fails with a rate-limit error that includes the retry count, and the client
+  can re-run that stage.
+- Each call logs one JSON line: exam id, batch, stage, attempts, 429 retries, total time
+  spent waiting, and duration. The generate response returns the same numbers, and the
+  phase 3 debug UI totals them per run, so you can see when limits are what slowed a batch.
+- Parallelism starts at 4 batches. If tier-1 limits regularly reject parallel drafts, it
+  drops to 2. That's one client constant, `MAX_PARALLEL_BATCHES`.
+
+## Timing
+
+- Under 60 s wall clock for a 20-question mock is a goal, not a constraint. Phase 3
+  measures real timings (per stage, per batch and wall clock) and reports them. 90 s is
+  acceptable; the architecture doesn't bend to hit 60 s.
+- The hard constraint is unchanged: each individual request finishes within
+  `maxDuration = 60`.
 
 ## Regeneration
 
