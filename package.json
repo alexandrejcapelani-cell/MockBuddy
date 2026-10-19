@@ -17,8 +17,8 @@
     "db:seed-demo": "node scripts/seed-demo.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
     "@base-ui/react": "^1.9.0",
+    "@google/genai": "^2.30.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
     "drizzle-orm": "^0.45.4",

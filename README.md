@@ -5,17 +5,17 @@ sample exam. The product spec is [MOCKBUDDY_SPEC.md](MOCKBUDDY_SPEC.md); decisio
 change or refine it are in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 Stack: Next.js 15 (App Router) · Tailwind + shadcn/ui · Postgres (embedded PGlite locally,
-Supabase later) · Drizzle ORM + postgres-js · Anthropic API (Haiku 5.5 for topic labels,
-Opus 5.5 for the blueprint, Sonnet 5.5 for generation; see `MODELS` in `lib/ai/config.ts`) ·
-Zod · KaTeX · unpdf.
+Supabase later) · Drizzle ORM + postgres-js · Gemini API via `@google/genai`
+(`gemini-3.5-flash-lite` for topic labels, `gemini-3.8-flash` for everything else; see
+`MODELS` in `lib/ai/config.ts`) · Zod · KaTeX · unpdf.
 
 ## Status
 
-Phases 0–5 are built: uploads, extraction, chunking and topic labels; blueprint extraction
+Phases 0–6 are built: uploads, extraction, chunking and topic labels; blueprint extraction
 with verbatim sample questions; generation (draft → critique → revise per batch of 5,
-batches in parallel, top-ups for dropped questions); taking the exam with immediate
-marking and explanations; and results with a per-topic breakdown and REGENERATE. The UI is
-deliberately plain until phase 6 brings the casino theme.
+batches one at a time by default for free-tier limits, top-ups for dropped questions);
+taking the exam with immediate marking and explanations; results with a per-topic
+breakdown and REGENERATE; history; the casino theme; and a landing page with a waitlist.
 
 To try the exam and results pages without calling the model, run `npm run db:seed-demo`
 while `npm run dev` is running: it adds a ready 10-question demo mock (kept apart from your
@@ -23,18 +23,21 @@ own material) and prints its link.
 
 ## Run it locally
 
-Requires Node 24. The only setting is your Anthropic API key.
+Requires Node 24. The only setting is a Gemini API key; a free one from
+[Google AI Studio](https://aistudio.google.com/apikey) works.
 
 ```bash
 npm install
-cp .env.example .env.local   # then put your key after ANTHROPIC_API_KEY=
+cp .env.example .env.local   # then put your key after GEMINI_API_KEY=
 npm run dev
 ```
 
 Open http://localhost:3000 for the landing page, or go straight to the app at
 http://localhost:3000/app. Instead of (or as well as) `.env.local`, you can paste a key
-in the API key field on the home page: it is kept only in that browser and takes precedence
-for that browser's requests (see "Bring your own key" in docs/DECISIONS.md).
+in the API key field at /app: it is kept only in that browser and takes precedence
+for that browser's requests (see "Bring your own key" in docs/DECISIONS.md). Costs show as
+"free tier" unless you set `GEMINI_TIER=paid`. To run batches in parallel on a paid key,
+set `BATCH_MODE` in `lib/ai/config.ts` to `"parallel"`.
 
 `npm run dev` also starts an embedded Postgres database
 (stored in `.data/pglite`) and applies the migrations; uploads are stored in

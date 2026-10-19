@@ -1,46 +1,56 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MODELS } from "./config.ts";
-import { estimateCostUsd, formatUsd, summarizeCalls } from "./pricing.ts";
+import { estimateCostUsd, formatCost, formatUsd, summarizeCalls } from "./pricing.ts";
 
-const usage = (inputTokens: number, outputTokens: number, cacheReadTokens = 0, cacheWriteTokens = 0) => ({
+const usage = (inputTokens: number, outputTokens: number, cacheReadTokens = 0, thoughtTokens = 0) => ({
   inputTokens,
   outputTokens,
   cacheReadTokens,
-  cacheWriteTokens,
+  thoughtTokens,
 });
 const close = (actual: number | null, expected: number) => assert.ok(actual !== null && Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
+const OCT_2026 = new Date("2026-10-19T12:00:00Z");
 
-test("every model in the map has a price", () => {
-  for (const model of Object.values(MODELS)) assert.notEqual(estimateCostUsd(model, usage(1, 1)), null, model);
+test("every model in the map has a paid price", () => {
+  for (const model of Object.values(MODELS)) assert.notEqual(estimateCostUsd(model, usage(1, 1), "paid"), null, model);
 });
 
-test("Sonnet 5.5: $2 in / $10 out per million, cache reads at 0.1x and writes at 1.25x", () => {
-  close(estimateCostUsd("claude-sonnet-5-5", usage(1_000_000, 100_000)), 3);
-  close(estimateCostUsd("claude-sonnet-5-5", usage(0, 0, 1_000_000, 1_000_000)), 0.2 + 2.5);
+test("the free tier costs exactly nothing, for any model", () => {
+  for (const model of [...Object.values(MODELS), "gemini-unknown"]) assert.equal(estimateCostUsd(model, usage(1_000_000, 1_000_000), "free"), 0);
 });
 
-test("Opus 5.5: $4 / $20, cache reads at 0.05x", () => {
-  close(estimateCostUsd("claude-opus-5-5", usage(10_000, 3_000)), 0.04 + 0.06);
-  close(estimateCostUsd("claude-opus-5-5", usage(0, 0, 1_000_000)), 0.2);
+test("gemini-3.8-flash in 2026: $0.75 in / $3.75 out per million, cached input $0.075, thinking billed as output", () => {
+  close(estimateCostUsd("gemini-3.8-flash", usage(1_000_000, 100_000), "paid", OCT_2026), 0.75 + 0.375);
+  close(estimateCostUsd("gemini-3.8-flash", usage(0, 0, 1_000_000), "paid", OCT_2026), 0.075);
+  close(estimateCostUsd("gemini-3.8-flash", usage(0, 100_000, 0, 100_000), "paid", OCT_2026), 0.75);
 });
 
-test("Haiku 5.5 switches to its long-prompt rate card above 100K prompt tokens", () => {
-  close(estimateCostUsd("claude-haiku-5-5", usage(20_000, 1_000)), 0.002 + 0.0005);
-  close(estimateCostUsd("claude-haiku-5-5", usage(120_000, 1_000)), 0.06 + 0.0025);
+test("gemini-3.8-flash prices double from 1 January 2027", () => {
+  close(estimateCostUsd("gemini-3.8-flash", usage(1_000_000, 100_000), "paid", new Date("2027-01-01T00:00:00Z")), 1.5 + 0.75);
+  close(estimateCostUsd("gemini-3.8-flash", usage(1_000_000, 0), "paid", new Date("2026-12-31T23:59:59Z")), 0.75);
 });
 
-test("unknown models have no estimate, and small amounts keep their precision", () => {
-  assert.equal(estimateCostUsd("claude-unknown", usage(1, 1)), null);
+test("gemini-3.5-flash-lite: $0.30 in / $2.50 out", () => {
+  close(estimateCostUsd("gemini-3.5-flash-lite", usage(20_000, 1_000, 0, 500), "paid", OCT_2026), 0.006 + 0.00375);
+});
+
+test("unknown models have no paid estimate, and small amounts keep their precision", () => {
+  assert.equal(estimateCostUsd("gemini-unknown", usage(1, 1), "paid"), null);
   assert.equal(formatUsd(0.0025), "$0.0025");
   assert.equal(formatUsd(1.234), "$1.23");
 });
 
+test("formatCost says free tier rather than $0 when every call was free", () => {
+  assert.equal(formatCost([{ billingTier: "free", estimatedCostUsd: 0 }]), "free tier");
+  assert.equal(formatCost([{ billingTier: "paid", estimatedCostUsd: 0.001 }, { billingTier: "free", estimatedCostUsd: 0 }]), "≈$0.0010");
+});
+
 test("summarizeCalls groups by the model that answered", () => {
   const summary = summarizeCalls([
-    { model: "claude-haiku-5-5", servedBy: "claude-haiku-5-5", durationMs: 1200, estimatedCostUsd: 0.001 },
-    { model: "claude-haiku-5-5", servedBy: "claude-haiku-5-5", durationMs: 1900, estimatedCostUsd: 0.0011 },
-    { model: "claude-opus-5-5", servedBy: null, durationMs: 21_000, estimatedCostUsd: null },
+    { model: "gemini-3.5-flash-lite", servedBy: "gemini-3.5-flash-lite", durationMs: 1200, billingTier: "free", estimatedCostUsd: 0 },
+    { model: "gemini-3.5-flash-lite", servedBy: "gemini-3.5-flash-lite", durationMs: 1900, billingTier: "free", estimatedCostUsd: 0 },
+    { model: "gemini-3.8-flash", servedBy: null, durationMs: 21_000, billingTier: "paid", estimatedCostUsd: 0.0021 },
   ]);
-  assert.equal(summary, "claude-haiku-5-5: 2 calls, 3.1 s, ≈$0.0021; claude-opus-5-5: 1 call, 21.0 s, ≈$0");
+  assert.equal(summary, "gemini-3.5-flash-lite: 2 calls, 3.1 s, free tier; gemini-3.8-flash: 1 call, 21.0 s, ≈$0.0021");
 });

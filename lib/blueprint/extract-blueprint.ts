@@ -44,7 +44,7 @@ export async function createBlueprint(
     {
       context: { label: "blueprint", filename },
       schema: BlueprintSchema,
-      system: [{ type: "text", text: BLUEPRINT_SYSTEM }],
+      system: BLUEPRINT_SYSTEM,
       messages: [{ role: "user", content: blueprintPrompt(paperText, filename, schemaText(BlueprintSchema)) }],
       task: "blueprint",
       deadlineAt,

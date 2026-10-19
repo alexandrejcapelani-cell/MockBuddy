@@ -4,7 +4,9 @@
 import { useSyncExternalStore } from "react";
 import { API_KEY_HEADER } from "./api-key.ts";
 
-const STORAGE_KEY = "mockbuddy.anthropicApiKey";
+const STORAGE_KEY = "mockbuddy.geminiApiKey";
+/** Where the Anthropic key was kept before the switch to Gemini; removed so it doesn't linger. */
+const LEGACY_STORAGE_KEY = "mockbuddy.anthropicApiKey";
 const CHANGE_EVENT = "mockbuddy:api-key-changed";
 
 /** The stored key, or null. Storage can be unavailable (blocked or private mode): that reads as no key. */
@@ -41,12 +43,21 @@ export function apiKeyHeaders(): Record<string, string> {
 }
 
 function subscribe(onChange: () => void): () => void {
+  removeLegacyKey();
   window.addEventListener(CHANGE_EVENT, onChange);
   window.addEventListener("storage", onChange); // another tab changed it
   return () => {
     window.removeEventListener(CHANGE_EVENT, onChange);
     window.removeEventListener("storage", onChange);
   };
+}
+
+function removeLegacyKey(): void {
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // Storage is unavailable, so there is nothing stored to remove.
+  }
 }
 
 /** The stored key, kept up to date across components and tabs. Null during server rendering. */

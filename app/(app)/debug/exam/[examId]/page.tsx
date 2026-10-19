@@ -7,7 +7,7 @@ import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
 import { db } from "@/lib/db";
 import { chunks, exams, generationBatches, questions } from "@/lib/db/schema";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
-import { formatUsd } from "@/lib/ai/pricing";
+import { formatCost } from "@/lib/ai/pricing";
 import type { StageMetrics } from "@/lib/generation/types";
 
 // Phase 3 quality review: every generated question with its answer, every explanation,
@@ -162,7 +162,8 @@ export default async function ExamReviewPage({ params }: { params: Promise<{ exa
 function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { batch: number })[]; wallClockMs: number }) {
   const stages = ["draft", "draft_retry", "critique", "revise"] as const;
   const modelOf = (m: StageMetrics) => m.servedBy ?? m.model;
-  const cost = (calls: StageMetrics[]) => calls.reduce((sum, m) => sum + (m.estimatedCostUsd ?? 0), 0);
+  // Runs recorded before the switch to Gemini have no thinking count.
+  const thoughts = (calls: StageMetrics[]) => calls.reduce((sum, m) => sum + (m.thoughtTokens ?? 0), 0);
   const models = [...new Set(metrics.map(modelOf))].sort();
   return (
     <section aria-labelledby="timing-heading" className="space-y-2">
@@ -172,7 +173,7 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
       <p>
         From creating the exam to its last batch finishing: {(wallClockMs / 1000).toFixed(1)} s. Longest single model call:{" "}
         {(Math.max(0, ...metrics.map((m) => m.durationMs)) / 1000).toFixed(1)} s (Vercel allows 60 s per request). Estimated cost
-        of this run: {formatUsd(cost(metrics))}.
+        of this run: {formatCost(metrics)}.
       </p>
       <div className="relative overflow-x-auto">
       <table className="w-full border-collapse">
@@ -202,7 +203,7 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
                 <td className="py-1 pr-3 text-right tabular-nums">{(Math.max(...durations) / 1000).toFixed(1)} s</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.retries429, 0)}</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.outputTokens, 0).toLocaleString("en")}</td>
-                <td className="py-1 text-right tabular-nums">{formatUsd(cost(calls))}</td>
+                <td className="py-1 text-right tabular-nums">{formatCost(calls)}</td>
               </tr>
             );
           })}
@@ -219,6 +220,7 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
             <th className="py-1 pr-3 text-right">Input tokens</th>
             <th className="py-1 pr-3 text-right">Cached input read</th>
             <th className="py-1 pr-3 text-right">Output tokens</th>
+            <th className="py-1 pr-3 text-right">Thinking tokens</th>
             <th className="py-1 text-right">Est. cost</th>
           </tr>
         </thead>
@@ -232,7 +234,8 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.inputTokens, 0).toLocaleString("en")}</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.cacheReadTokens, 0).toLocaleString("en")}</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.outputTokens, 0).toLocaleString("en")}</td>
-                <td className="py-1 text-right tabular-nums">{formatUsd(cost(calls))}</td>
+                <td className="py-1 pr-3 text-right tabular-nums">{thoughts(calls).toLocaleString("en")}</td>
+                <td className="py-1 text-right tabular-nums">{formatCost(calls)}</td>
               </tr>
             );
           })}

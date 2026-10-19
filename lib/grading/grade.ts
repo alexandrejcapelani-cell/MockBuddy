@@ -59,7 +59,7 @@ async function gradeNumerical(question: Question, response: string, apiKey: ApiK
       context: { label: "grade_numeric", questionId: question.id },
       task: "grading",
       schema: NumericJudgementSchema,
-      system: [{ type: "text", text: NUMERIC_JUDGE_SYSTEM }],
+      system: NUMERIC_JUDGE_SYSTEM,
       messages: [
         {
           role: "user",
@@ -90,7 +90,7 @@ async function gradeShort(question: Question, response: string, apiKey: ApiKey, 
       context: { label: "grade_short", questionId: question.id },
       task: "grading",
       schema: ShortAnswerGradeSchema,
-      system: [{ type: "text", text: SHORT_GRADING_SYSTEM }],
+      system: SHORT_GRADING_SYSTEM,
       messages: [
         {
           role: "user",

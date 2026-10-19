@@ -35,7 +35,7 @@ export default async function TablePage() {
       </header>
 
       {/* Only whether a server key exists reaches the page, never the key itself. */}
-      <ApiKeyField serverKeyConfigured={isConfigured("ANTHROPIC_API_KEY")} />
+      <ApiKeyField serverKeyConfigured={isConfigured("GEMINI_API_KEY")} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <section aria-labelledby="material-heading" className="panel space-y-4 p-5">

@@ -110,7 +110,7 @@ export default function LandingPage() {
       <footer className="mx-auto max-w-5xl px-4 pt-6 pb-10 text-center text-sm text-dim">
         <p>
           The casino look is decoration only: there is no money, betting or gambling anywhere in MockBuddy. It runs on your own
-          Anthropic API key, kept in your browser.
+          Gemini API key, kept in your browser.
         </p>
       </footer>
     </>

@@ -7,7 +7,7 @@ import { LOCAL_DATABASE_URL } from "@/lib/local-db";
  * first used, not at import time, so `next build` succeeds before every variable
  * is configured and a missing key fails with a message that names it.
  *
- * Secrets (ANTHROPIC_API_KEY, SUPABASE_SERVICE_ROLE_KEY) are only ever read here,
+ * Secrets (GEMINI_API_KEY, SUPABASE_SERVICE_ROLE_KEY) are only ever read here,
  * and `server-only` makes any client-component import of this module a build error.
  */
 const schemas = {
@@ -15,7 +15,9 @@ const schemas = {
     .string()
     .regex(/^postgres(ql)?:\/\//, "must be a postgres:// or postgresql:// connection string"),
   DEMO_USER_ID: z.string().trim().min(1),
-  ANTHROPIC_API_KEY: z.string().trim().min(1),
+  GEMINI_API_KEY: z.string().trim().min(1),
+  // Which Gemini plan the key is on. The API doesn't say, and it decides whether calls cost anything.
+  GEMINI_TIER: z.enum(["free", "paid"], "must be free or paid"),
   // Not used while files are stored locally; the Supabase storage adapter will read them.
   SUPABASE_SERVICE_ROLE_KEY: z.string().trim().min(1),
   NEXT_PUBLIC_SUPABASE_URL: z.url("must be your Supabase project URL, e.g. https://<ref>.supabase.co"),
@@ -25,7 +27,7 @@ type EnvKey = keyof typeof schemas;
 
 // Used when the variable is unset. DATABASE_URL only falls back outside production, to
 // the embedded database `npm run dev` starts, so a deployment without it still fails loudly.
-const defaults: Partial<Record<EnvKey, string>> = { DEMO_USER_ID: "demo" };
+const defaults: Partial<Record<EnvKey, string>> = { DEMO_USER_ID: "demo", GEMINI_TIER: "free" };
 const developmentDefaults: Partial<Record<EnvKey, string>> = { DATABASE_URL: LOCAL_DATABASE_URL };
 
 export class ConfigError extends Error {

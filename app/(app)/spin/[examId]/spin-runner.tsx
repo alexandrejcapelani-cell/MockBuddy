@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SlotMachine } from "@/components/slot-machine";
-import { formatUsd } from "@/lib/ai/pricing";
+import { BATCH_MODE, PARALLEL_BATCHES } from "@/lib/ai/config";
+import { formatCost } from "@/lib/ai/pricing";
 import type { BatchView, ExamProgress } from "@/lib/generation/context";
-import { type GenerationResult, MAX_PARALLEL_BATCHES, runGeneration } from "@/lib/generation/runner";
+import { type GenerationResult, runGeneration } from "@/lib/generation/runner";
 
 const STAGE_TEXT: Record<BatchView["stage"], string> = {
   draft: "drafting",
@@ -92,16 +93,16 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
   const locked = jackpot ? 3 : Math.min(2, Math.floor((finished / Math.max(1, list.length)) * 3 + 1e-9));
 
   const elapsed = startedAt ? ((finishedAt ?? now) - startedAt) / 1000 : null;
-  const totals = list.flatMap((b) => b.metrics).reduce(
+  const allMetrics = list.flatMap((b) => b.metrics);
+  const totals = allMetrics.reduce(
     (acc, m) => ({
       calls: acc.calls + 1,
       retries429: acc.retries429 + m.retries429,
       waitedMs: acc.waitedMs + m.waitedMs,
       inputTokens: acc.inputTokens + m.inputTokens,
       outputTokens: acc.outputTokens + m.outputTokens,
-      costUsd: acc.costUsd + (m.estimatedCostUsd ?? 0),
     }),
-    { calls: 0, retries429: 0, waitedMs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    { calls: 0, retries429: 0, waitedMs: 0, inputTokens: 0, outputTokens: 0 },
   );
 
   return (
@@ -177,8 +178,8 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
         <p className="mt-3 text-dim">
           {elapsed !== null && `Wall clock ${elapsed.toFixed(1)} s · `}
           {totals.calls} model calls · {totals.retries429} rate-limit retries ({(totals.waitedMs / 1000).toFixed(1)} s waiting) ·{" "}
-          {totals.inputTokens.toLocaleString("en")} input / {totals.outputTokens.toLocaleString("en")} output tokens · about{" "}
-          {formatUsd(totals.costUsd)} · up to {MAX_PARALLEL_BATCHES} batches at once
+          {totals.inputTokens.toLocaleString("en")} input / {totals.outputTokens.toLocaleString("en")} output tokens ·{" "}
+          {formatCost(allMetrics)} · {BATCH_MODE === "parallel" ? `up to ${PARALLEL_BATCHES} batches at once` : "one batch at a time"}
         </p>
       </details>
     </div>

@@ -1,12 +1,12 @@
-// Browser-side driver for generation: runs the exam's batches in parallel, each through its
-// stages one request at a time, then tops up dropped questions and finalizes.
+// Browser-side driver for generation: runs the exam's batches (one at a time by default, or
+// in parallel: BATCH_MODE in lib/ai/config.ts), each through its stages one request at a
+// time, then tops up dropped questions and finalizes.
 // Every step is resumable: reloading the page starts again from what the database says.
 
+import { batchConcurrency } from "../ai/config.ts";
 import { postJson } from "../upload-client.ts";
 import type { BatchView, ExamProgress } from "./context.ts";
 
-/** Batches generating at once. Drop to 2 if rate limits regularly reject parallel drafts. */
-export const MAX_PARALLEL_BATCHES = 4;
 const MAX_TRANSIENT_RETRIES = 4;
 const MAX_STAGE_STEPS = 10;
 const BUSY_POLL_MS = 2_000;
@@ -63,7 +63,7 @@ export async function fetchProgress(examId: string): Promise<ExamProgress> {
 async function runPendingBatches(examId: string, progress: ExamProgress, events: RunnerEvents) {
   progress.batches.forEach((batch) => events.onBatch(batch));
   const pending = progress.batches.filter((batch) => batch.stage !== "done" && batch.stage !== "failed");
-  const results = await withConcurrency(pending, MAX_PARALLEL_BATCHES, (batch) => runBatch(examId, batch.batchIndex, events));
+  const results = await withConcurrency(pending, batchConcurrency(), (batch) => runBatch(examId, batch.batchIndex, events));
   // Batches usually fail for the same reason (a bad key, a rate limit), so say each reason once.
   const failures = new Set(results.flatMap((result) => (result.status === "rejected" ? [(result.reason as Error).message] : [])));
   if (failures.size > 0) throw new Error([...failures].join(" "));

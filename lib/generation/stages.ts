@@ -1,8 +1,7 @@
 import "server-only";
-import type Anthropic from "@anthropic-ai/sdk";
 import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import type { z } from "zod";
-import { type CallMetrics, generateJson, ModelCallError, schemaText, withRetryNote } from "@/lib/ai/call";
+import { type CallMetrics, generateJson, ModelCallError, type PromptMessage, schemaText, withRetryNote } from "@/lib/ai/call";
 import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { exams, generationBatches, questions } from "@/lib/db/schema";
@@ -123,7 +122,7 @@ const STAGES: Record<Exclude<BatchStage, "done" | "failed">, (run: StageRun) => 
 // ---------------------------------------------------------------- C1: draft
 
 async function runDraft(run: StageRun): Promise<StageResult> {
-  const response = await callModel(run, "draft", SlotQuestionsSchema, generationSystemBlocks(run), [
+  const response = await callModel(run, "draft", SlotQuestionsSchema, generationSystemPrompt(run), [
     { role: "user", content: draftPrompt(run.sources, run.existing, run.context.difficulty) },
   ]);
   if ("failed" in response) return response.failed;
@@ -146,7 +145,7 @@ async function runDraftRetry(run: StageRun): Promise<StageResult> {
     previous,
     failing.flatMap((draft) => draft.issues),
   );
-  const response = await callModel(run, "draft_retry", SlotQuestionsSchema, generationSystemBlocks(run), messages);
+  const response = await callModel(run, "draft_retry", SlotQuestionsSchema, generationSystemPrompt(run), messages);
   if ("failed" in response) return response.failed;
 
   const retried = "error" in response
@@ -186,7 +185,7 @@ async function runCritique(run: StageRun): Promise<StageResult> {
     run,
     "critique",
     CritiqueSchema,
-    [{ type: "text", text: critiqueSystem(run.context, schemaText(CritiqueSchema)), cache_control: { type: "ephemeral" } }],
+    critiqueSystem(run.context, schemaText(CritiqueSchema)),
     [{ role: "user", content: critiquePrompt(reviewed, run.existing, run.context.difficulty) }],
   );
   if ("failed" in response) return response.failed;
@@ -233,7 +232,7 @@ async function runRevise(run: StageRun): Promise<StageResult> {
     draft: run.batch.drafts.find((draft) => draft.slot === verdict.slot)!.question!,
     instructions: verdict.instructions,
   }));
-  const response = await callModel(run, "revise", SlotQuestionsSchema, generationSystemBlocks(run), [
+  const response = await callModel(run, "revise", SlotQuestionsSchema, generationSystemPrompt(run), [
     { role: "user", content: revisePrompt(requests, run.existing, run.context.difficulty) },
   ]);
   if ("failed" in response) return response.failed;
@@ -280,8 +279,8 @@ async function callModel<S extends z.ZodType>(
   run: StageRun,
   stage: StageMetrics["stage"],
   schema: S,
-  system: Anthropic.Beta.Messages.BetaTextBlockParam[],
-  messages: Anthropic.Beta.Messages.BetaMessageParam[],
+  system: string,
+  messages: PromptMessage[],
 ): Promise<ModelResponse<z.output<S>>> {
   const task = ({ draft: "draft", draft_retry: "draft", critique: "critique", revise: "revise" } as const)[stage];
   try {
@@ -311,8 +310,9 @@ function stageMetrics(stage: StageMetrics["stage"], metrics: CallMetrics, outcom
   return { stage, ...metrics, outcome };
 }
 
-function generationSystemBlocks(run: StageRun): Anthropic.Beta.Messages.BetaTextBlockParam[] {
-  return [{ type: "text", text: generationSystem(run.context, schemaText(SlotQuestionsSchema)), cache_control: { type: "ephemeral" } }];
+/** The same text for every draft and revise call in an exam, so Gemini's implicit prompt cache can reuse it. */
+function generationSystemPrompt(run: StageRun): string {
+  return generationSystem(run.context, schemaText(SlotQuestionsSchema));
 }
 
 function evaluateDrafts(run: StageRun, sources: SlotWithSources[], returned: (GeneratedQuestion & { slot: number })[]): DraftSlot[] {

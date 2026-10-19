@@ -5,7 +5,7 @@ import { checkApiKeyFormat, maskApiKey } from "@/lib/api-key";
 import { clearStoredApiKey, storeApiKey, useStoredApiKey } from "@/lib/api-key-client";
 
 /**
- * Bring your own Anthropic API key. The key stays in this browser's localStorage and goes
+ * Bring your own Gemini API key. The key stays in this browser's localStorage and goes
  * only in a request header to this app's model-calling routes; it is never saved on the server.
  */
 export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: boolean }) {
@@ -29,13 +29,13 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
   }
 
   const fallback = serverKeyConfigured
-    ? "Leave it empty to use ANTHROPIC_API_KEY from this server's .env.local."
-    : "This server has no ANTHROPIC_API_KEY, so nothing that calls the model will work until you paste a key.";
+    ? "Leave it empty to use GEMINI_API_KEY from this server's .env.local."
+    : "This server has no GEMINI_API_KEY, so nothing that calls the model will work until you paste a key.";
 
   return (
     <section aria-labelledby="api-key-heading" className="panel space-y-2 px-4 py-3 text-sm">
       <h2 id="api-key-heading" className="font-sans text-base font-semibold">
-        Anthropic API key
+        Gemini API key
       </h2>
       {stored ? (
         <div className="flex flex-wrap items-center gap-3">
@@ -55,14 +55,14 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
           }}
         >
           <label htmlFor="api-key" className="sr-only">
-            Your Anthropic API key
+            Your Gemini API key
           </label>
           <input
             id="api-key"
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="sk-ant-…"
+            placeholder="AIza…"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             aria-describedby="api-key-help"
@@ -74,8 +74,12 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
         </form>
       )}
       <p id="api-key-help" className="text-dim">
-        Optional. Your key is kept only in this browser and sent only with requests that call the model; it is never
-        saved on the server. {stored ? "Clear it to go back to the server's key." : fallback}
+        Optional. Create a free key in{" "}
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+          Google AI Studio
+        </a>
+        . Your key is kept only in this browser and sent only with requests that call the model; it is never saved on the
+        server. {stored ? "Clear it to go back to the server's key." : fallback}
       </p>
       {error && (
         <p role="alert" className="text-error">

@@ -31,7 +31,7 @@ export async function labelTopics(
       {
         context: { label: "topic_labels", materialId: context.materialId, firstChunk: indexes[0] },
         schema: TopicLabelsSchema,
-        system: [{ type: "text", text: TOPIC_LABEL_SYSTEM }],
+        system: TOPIC_LABEL_SYSTEM,
         messages: [{ role: "user", content: topicLabelPrompt(batch, [...known].sort(), schemaText(TopicLabelsSchema)) }],
         task: "topicLabels",
         deadlineAt: context.deadlineAt,

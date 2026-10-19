@@ -17,7 +17,8 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   browser flow is the same for both: get an upload target, PUT the bytes to it, send only
   the storage path to the backend. Moving to Supabase Storage is adding
   `lib/storage/supabase.ts` and changing the one line in `lib/storage/index.ts`.
-- The only environment variable is `ANTHROPIC_API_KEY`. Everything else has a local default.
+- The only environment variable is `GEMINI_API_KEY` (plus `GEMINI_TIER`, which defaults to
+  `free`). Everything else has a local default.
 - No `APP_PASSPHRASE` or middleware while local (see Access).
 - Each phase ends with build, typecheck, lint and tests passing and a local commit. There
   are no deployment checks between phases.
@@ -29,47 +30,119 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   labelling makes one call per 20 chunks in one request, so a very large file could need
   splitting into separate requests.
 
-## Models per call (2026-10-19)
+## AI provider: Google Gemini (2026-10-19)
+
+- **MockBuddy now calls the Gemini API (Google AI Studio) instead of the Anthropic API, so
+  it can run on a free-tier key.** This replaces the spec's pinned Anthropic API. The SDK is
+  Google's `@google/genai`; `@anthropic-ai/sdk` is gone.
+- Calls use Gemini's Interactions API (`interactions.create`), which Google lists as
+  generally available and recommends for new projects (`generateContent` is now its legacy
+  API). Every call sends `store: false`, so Google keeps no retrievable copy of the
+  conversation (otherwise it keeps interactions for a day on the free tier, 55 days on
+  paid). MockBuddy never needs server-side conversation state: each call is one user turn.
+- Structured output: `response_format` with `mime_type: "application/json"` and a JSON
+  Schema. `lib/ai/json-schema.ts` turns each Zod schema into the subset Gemini documents
+  (types, nullable as `[type, "null"]`, properties, required, additionalProperties, enum,
+  format, minimum/maximum, items, min/maxItems) and throws on anything else, such as unions,
+  `pattern` or `minLength`. A test runs every output schema through it. Zod validation of
+  each reply and the one retry with the problems listed are unchanged, and the LaTeX
+  escape repair still runs before parsing.
+- Thinking: Gemini's `thinking_level` replaces Anthropic's effort, set per task in
+  `lib/ai/config.ts` (`THINKING`). Thinking counts toward `max_output_tokens`. An
+  `incomplete` interaction is reported as cut off (max tokens); a `failed` one whose reason
+  is a safety block is reported as a refusal. There is no server-side refusal fallback on
+  Gemini, so that beta is gone.
+- Dropped with Anthropic: `cache_control`. Gemini caches repeated prompt prefixes
+  implicitly, and draft and revise still share one system prompt per exam, so the cache can
+  reuse it. `temperature` is still never sent.
+- Unchanged: the draft → critique → revise pipeline (three separate calls), chunk rotation,
+  option-by-option explanations and their validation, marking rules, the casino theme.
+- Verified only against a local fake of the Interactions API that mirrors the request and
+  response shapes from the SDK's types and docs. Not yet checked against the real API:
+  question quality from Flash compared with the Anthropic models, real free-tier limits, the
+  real shape of a safety block, and whether `total_output_tokens` includes thinking tokens
+  (the cost estimate assumes it doesn't).
+
+### Gemini terms to know before sharing MockBuddy
+
+- Google's Gemini API terms allow only paid services for apps made available to users in
+  the EEA, Switzerland or the UK. Running MockBuddy yourself on a free key is fine; a
+  deployment that other students in Spain or elsewhere in the EEA use needs paid keys.
+  Revisit this before deploying.
+- Outside the EEA, Switzerland and the UK, Google may use free-tier prompts and responses
+  to improve its products, and human reviewers may read them; Google asks users not to
+  send sensitive, confidential or personal information to its unpaid services. In the EEA,
+  Switzerland and the UK the paid-service data terms apply to free usage too. Course slides
+  and past papers may be confidential to the course: check before uploading them.
+- The Gemini API terms require users to be 18 or older.
+
+## Models per call (2026-10-19, Gemini since the same day)
 
 - One map in `lib/ai/config.ts` (`MODELS`) picks the model for each kind of call; it is the
   only place to change model choice. This replaces the spec's single pinned model.
 
-  | Call | Model |
-  | --- | --- |
-  | Topic labelling | `claude-haiku-5-5` |
-  | Blueprint extraction | `claude-opus-5-5` |
-  | Draft, critique, revise, grading | `claude-sonnet-5-5` |
+  | Call | Model | Thinking |
+  | --- | --- | --- |
+  | Topic labelling | `gemini-3.5-flash-lite` | low |
+  | Blueprint extraction | `gemini-3.8-flash` | high |
+  | Draft, critique, revise, grading | `gemini-3.8-flash` | medium |
 
-- Callers name the task, not the model; effort and output caps come from the same file.
-- Every call's log line and stored metrics record the model requested, the model that
-  answered (they differ only if a refusal fallback ran), tokens, timings and an estimated
-  cost from list prices in `lib/ai/pricing.ts`. The review page splits a run's cost by
-  stage and by model; each upload shows its labelling or blueprint call's model, time and
-  cost when it finishes.
-- None of the three models accepts non-default sampling parameters, so no call sends
-  `temperature`. Haiku 5.5 has no server-side refusal fallback; with `fallbacks: "default"`
-  a declined Haiku request simply stays declined and is reported as a refusal.
+- Why these: both are stable and on the free tier. Gemini's strongest models (Gemini 4
+  Argon, 3.1 Pro) have no free tier, so `gemini-3.8-flash`, the newest stable Flash, is the
+  main model. `gemini-3.5-flash-lite` is the Flash-Lite Google recommends for new projects;
+  `gemini-3.1-flash-lite` is a little cheaper on a paid key if labelling cost ever matters.
+  The blueprint gets high thinking because it runs once per sample exam and moved from
+  Opus to a Flash model. `gemini-3.8-flash` rejects the `minimal` thinking level.
+- Callers name the task, not the model; thinking levels and output caps come from the same
+  file.
+- Every call's log line and stored metrics record the model requested, the model the API
+  reports, tokens (uncached input, cached input, output, thinking), timings, the billing
+  tier and the estimated cost. The review page splits a run's cost by stage and by model;
+  each upload shows its labelling or blueprint call's model, time and cost when it finishes.
+
+### Cost
+
+- **Free-tier calls cost exactly $0 and the UI says "free tier"**, never a would-be dollar
+  figure. The API doesn't say which plan a key is on, so `GEMINI_TIER` in `.env.local`
+  (`free` by default, or `paid`) says so for every call, pasted keys included. Limit, to
+  revisit with deployment: on a shared deployment the label follows the server's setting,
+  not each user's plan.
+- On `paid`, costs come from Standard-tier list prices in `lib/ai/pricing.ts`, per million
+  tokens: `gemini-3.8-flash` $0.75 in, $3.75 out, $0.075 cached input until 31 December
+  2026, then double from 1 January 2027 (the file has both dated cards);
+  `gemini-3.5-flash-lite` $0.30 in, $2.50 out, $0.03 cached. Thinking is billed at the
+  output rate.
 
 ## Bring your own key (BYOK)
 
 - **BYOK is the intended model for anyone else using MockBuddy, so the deployed app never
-  spends the owner's credits.** On the deployment `ANTHROPIC_API_KEY` stays unset: a request
-  without a pasted key then fails with "missing key" instead of falling back to the owner's.
-- The home page has a key field. The key is stored only in that browser's `localStorage`,
-  shown masked (`sk-ant-…` plus the last 4 characters) with a Clear button.
-- The browser sends it in the `x-anthropic-key` header, and only on requests that call the
-  model (material ingest, blueprint, generate, and grading in phase 4). Never in a URL or
-  query string.
-- The server uses it for that request's Anthropic client only: a fresh client per call,
+  spends the owner's credits or quota.** On the deployment `GEMINI_API_KEY` stays unset: a
+  request without a pasted key then fails with "missing key" instead of falling back to the
+  owner's.
+- The app page (`/app`) has a key field for a Gemini API key from Google AI Studio. The key
+  is stored only in that browser's `localStorage` (`mockbuddy.geminiApiKey`), shown masked
+  (`AIza…` plus the last 4 characters) with a Clear button. A key saved under the old
+  Anthropic name is deleted from the browser the first time the page loads.
+- The browser sends it in the `x-gemini-key` header, and only on requests that call the
+  model (material ingest, blueprint, generate, grading). Never in a URL or query string.
+  The SDK passes it on to Google in the `x-goog-api-key` header, not the URL.
+- The server uses it for that request's Gemini client only: a fresh client per call,
   never cached. It is never stored, written to the database or logged; failure messages
-  name which key was used, never its value.
-- Without the header the server falls back to `ANTHROPIC_API_KEY` from `.env.local`, so
-  local runs keep using the owner's account without pasting anything.
-- Distinct failures, each with its own message and status: missing key (401), invalid key
-  (401 from Anthropic, or 400 for a malformed paste), out of credits or spend limit reached
-  (402), rate limited (429, after the automatic backoff retries).
-- A key problem doesn't fail a generation batch: the batch stays at its stage, so after
-  fixing the key, "Resume generation" carries on where it stopped.
+  name which key was used, never its value. The key is always passed explicitly, so the
+  SDK never falls back to a `GOOGLE_API_KEY` set in the shell.
+- Without the header the server falls back to `GEMINI_API_KEY` from `.env.local`, so
+  local runs keep using the owner's key without pasting anything.
+- Distinct failures, each with its own message and status:
+  - missing key (401);
+  - invalid key (401): Google's `API_KEY_INVALID`, a key blocked as leaked, or a 401/403;
+    400 for a malformed paste, including an Anthropic key;
+  - quota exceeded (429): the day's free-tier requests are used up (reset at midnight
+    Pacific time), the model has no free quota (`limit: 0`), a spending cap was reached, or
+    the free tier isn't available in the user's region;
+  - rate limited (429, after the automatic backoff retries).
+- A key or quota problem doesn't fail a generation batch: the batch stays at its stage, so
+  after fixing the key, or once the quota resets, "Resume generation" carries on where it
+  stopped.
 - Known limits: `localStorage` is readable by any script running on the app's origin, so
   the page must never load third-party scripts; and users must trust the deployment,
   since their key passes through its server.
@@ -79,9 +152,10 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 - Draft, critique and revise stay three separate model calls. Each runs in its own HTTP
   request (`/api/generate` with a `stage`), with the state between stages saved in the
   database. Every AI route keeps `maxDuration = 60`.
-- Batches of 5 run **in parallel** from the client, 4 at a time to start with (see Rate
-  limits). `exams.plan` assigns every slot its type, section, marks and chunk(s) up front,
-  so batches don't depend on each other. For the wall-clock target, see Timing.
+- Batches of 5 run **one at a time** from the client by default, for free-tier rate limits
+  (see Rate limits). `exams.plan` assigns every slot its type, section, marks and chunk(s)
+  up front, so batches don't depend on each other and can run in parallel again with one
+  flag. For the wall-clock target, see Timing.
 - Consequence, accepted: the draft call doesn't see stems from other batches of the same
   exam. Cross-batch dedup relies on chunk rotation, a server-side word-overlap check and
   the critique pass. Stems from the previous exam chain and the sample exam are still
@@ -89,14 +163,12 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 - Dropped questions (failed validation twice, or still failing after revise) are replaced
   by at most 2 extra batches, each through the full pipeline and drawn from unused chunks.
   If the exam is still short, it ships short and the UI says so.
-- No `temperature` parameter: the models reject non-default values, and 1.0 is the
-  default. Variety comes from the seed offset, the exclusions and chunk choice. Reasoning
-  effort is set explicitly per call.
-- JSON comes from structured outputs (`output_config.format`) built from the same Zod
-  schemas in `lib/schemas.ts`. Zod validation plus one retry covers the rules JSON Schema
-  can't express. Stripping stray fences stays as a guard.
-- `stop_reason` of `refusal` or `max_tokens` is reported as its own failure. The API's
-  server-side refusal fallback (`fallbacks: "default"`) is on.
+- No `temperature` parameter: variety comes from the seed offset, the exclusions and chunk
+  choice. The thinking level is set explicitly per call.
+- JSON comes from Gemini's structured output, built from the same Zod schemas in
+  `lib/schemas.ts` (see "AI provider"). Zod validation plus one retry covers the rules JSON
+  Schema can't express. Stripping stray fences stays as a guard.
+- A cut-off reply (`incomplete`) and a safety block are each reported as their own failure.
 
 ### How the stages work (implemented in phase 3)
 
@@ -119,19 +191,31 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 
 ## Rate limits
 
-- Every model call retries HTTP 429 with exponential backoff plus jitter, and waits for the
-  `retry-after` header when the API sends one. The SDK's built-in retries are off
-  (`maxRetries: 0`) so one wrapper owns retrying and can count it. Because that also
-  removes the SDK's retries for overloaded (529) and 5xx responses, those use the same
-  backoff.
+- Gemini's limits apply per Google Cloud project, not per key, and per model: requests per
+  minute, input tokens per minute and requests per day (daily limits reset at midnight
+  Pacific time). Google no longer lists the free-tier numbers on its rate-limits page;
+  AI Studio shows each project's actual limits.
+- **Batches run one at a time by default** (`BATCH_MODE = "sequential"` in
+  `lib/ai/config.ts`), so a free-tier key isn't hit with several drafts at once. Set it to
+  `"parallel"` to go back to up to `PARALLEL_BATCHES` (4) at once on a paid key. The stages
+  inside a batch were always sequential.
+- Every model call retries a per-minute 429 with exponential backoff plus jitter, and waits
+  as long as Gemini's `RetryInfo.retryDelay` (or a `retry-after` header) asks, up to 60 s.
+  A per-day 429 isn't retried: it's "quota exceeded". The SDK's built-in retries are off
+  (`retries: { strategy: "none" }`; otherwise it retries 429 and 5xx up to 5 times on its
+  own) so one wrapper owns retrying and can count it. Overloaded (503) and other 5xx
+  responses use the same backoff.
+- On the free tier the daily request limit is likely to bind before the per-minute one.
+  A 20-question mock makes about 12 to 20 calls to the main model (4 batches × draft,
+  critique, revise, plus draft retries and top-ups), plus one blueprint per sample exam
+  and one call per short or unreadable numerical answer. Topic labels use the lite model,
+  which has its own quota.
 - Backoff never sleeps past the request's 60 s budget. If the next wait would overrun it,
   the stage fails with a rate-limit error that includes the retry count, and the client
   can re-run that stage.
 - Each call logs one JSON line: exam id, batch, stage, attempts, 429 retries, total time
   spent waiting, and duration. The generate response returns the same numbers, and the
   phase 3 debug UI totals them per run, so you can see when limits are what slowed a batch.
-- Parallelism starts at 4 batches. If tier-1 limits regularly reject parallel drafts, it
-  drops to 2. That's one client constant, `MAX_PARALLEL_BATCHES`.
 
 ## Timing
 
@@ -140,6 +224,9 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   acceptable; the architecture doesn't bend to hit 60 s.
 - The hard constraint is unchanged: each individual request finishes within
   `maxDuration = 60`.
+- Running batches one at a time (the free-tier default) makes a mock's wall clock roughly
+  the sum of its batches, so expect minutes rather than about one for 20 questions. That's
+  accepted. Each request is still one model call, so the per-request limit is unaffected.
 
 ## Regeneration
 
@@ -185,7 +272,7 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 
 - One route, `POST /api/grade`, marks every answer type. MCQ and numbers the parser can
   read never call the model; short answers, and numbers it can't read, make one call
-  (Sonnet 5.5, the `grading` task), plus one retry if the marking comes back malformed.
+  (`gemini-3.8-flash`, the `grading` task), plus one retry if the marking comes back malformed.
 - Numbers: a decimal comma is accepted ("2,4"). "1,234" is ambiguous (1234 or 1.234), so
   both readings are tried and either can be right. Anything with no number or several
   numbers ("b1 = 2.4", "two point four") goes to the model to judge.

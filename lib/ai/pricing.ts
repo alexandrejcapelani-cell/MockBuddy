@@ -1,43 +1,50 @@
-// Estimated cost of a model call, from its token usage. List prices in USD per million
-// tokens as of October 2026; check the Anthropic pricing page before budgeting on them.
-// Thinking tokens are billed as output and are included in output_tokens.
+// Estimated cost of a model call, from its token usage. Gemini API Standard-tier list prices
+// in USD per million tokens, as published in October 2026; check Google's pricing page
+// before budgeting on them. Thinking tokens are billed at the output rate.
+//
+// On the free tier nothing is billed, so free-tier calls cost exactly $0 and the UI says
+// "free tier" rather than showing what the call would have cost on a paid key.
+
+/** Which Gemini plan the key is on: GEMINI_TIER in .env.local (the API doesn't say). */
+export type BillingTier = "free" | "paid";
 
 interface RateCard {
   input: number;
   output: number;
-  /** Multiples of the input rate. */
-  cacheReadFactor: number;
-  cacheWriteFactor: number;
+  /** Implicitly cached input tokens. */
+  cachedInput: number;
 }
 
-const PRICES: Record<string, { base: RateCard; longPrompt?: { aboveTokens: number; card: RateCard } }> = {
-  "claude-opus-5-5": { base: { input: 4, output: 20, cacheReadFactor: 0.05, cacheWriteFactor: 1.25 } },
-  "claude-sonnet-5-5": { base: { input: 2, output: 10, cacheReadFactor: 0.1, cacheWriteFactor: 1.25 } },
-  "claude-haiku-5-5": {
-    base: { input: 0.1, output: 0.5, cacheReadFactor: 0.1, cacheWriteFactor: 1.25 },
-    // Haiku 5.5 has a second rate card for prompts over 100K tokens.
-    longPrompt: { aboveTokens: 100_000, card: { input: 0.5, output: 2.5, cacheReadFactor: 0.1, cacheWriteFactor: 1.25 } },
-  },
+/** Rate cards in date order; a card applies from its date (UTC) until the next one. */
+const PRICES: Record<string, { from: string; card: RateCard }[]> = {
+  // Introductory prices until the end of 2026, then double.
+  "gemini-3.8-flash": [
+    { from: "2026-01-01", card: { input: 0.75, output: 3.75, cachedInput: 0.075 } },
+    { from: "2027-01-01", card: { input: 1.5, output: 7.5, cachedInput: 0.15 } },
+  ],
+  "gemini-3.5-flash-lite": [{ from: "2026-01-01", card: { input: 0.3, output: 2.5, cachedInput: 0.03 } }],
 };
 
 export interface TokenUsage {
+  /** Prompt tokens that weren't served from the cache. */
   inputTokens: number;
-  outputTokens: number;
   cacheReadTokens: number;
-  cacheWriteTokens: number;
+  /** The visible answer. */
+  outputTokens: number;
+  thoughtTokens: number;
 }
 
-/** USD, or null for a model without a price entry here. */
-export function estimateCostUsd(model: string, usage: TokenUsage): number | null {
-  const prices = PRICES[model];
-  if (!prices) return null;
-  const promptTokens = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
-  const card = prices.longPrompt && promptTokens > prices.longPrompt.aboveTokens ? prices.longPrompt.card : prices.base;
+/** USD: 0 on the free tier, otherwise from list prices; null for a model without a price entry here. */
+export function estimateCostUsd(model: string, usage: TokenUsage, tier: BillingTier, at: Date = new Date()): number | null {
+  if (tier === "free") return 0;
+  const cards = PRICES[model];
+  if (!cards) return null;
+  const day = at.toISOString().slice(0, 10);
+  const card = cards.filter((entry) => entry.from <= day).at(-1)?.card ?? cards[0].card;
   const usd =
     usage.inputTokens * card.input +
-    usage.cacheReadTokens * card.input * card.cacheReadFactor +
-    usage.cacheWriteTokens * card.input * card.cacheWriteFactor +
-    usage.outputTokens * card.output;
+    usage.cacheReadTokens * card.cachedInput +
+    (usage.outputTokens + usage.thoughtTokens) * card.output;
   return usd / 1_000_000;
 }
 
@@ -50,10 +57,17 @@ export interface CallSummaryInput {
   model: string;
   servedBy: string | null;
   durationMs: number;
+  billingTier: BillingTier;
   estimatedCostUsd: number | null;
 }
 
-/** "claude-haiku-5-5: 1 call, 3.1 s, ≈$0.0021" for each model used, joined with "; ". */
+/** "free tier" when every call was free, otherwise "≈$0.0021" (calls without a price count as $0). */
+export function formatCost(calls: Pick<CallSummaryInput, "billingTier" | "estimatedCostUsd">[]): string {
+  if (calls.length > 0 && calls.every((call) => call.billingTier === "free")) return "free tier";
+  return `≈${formatUsd(calls.reduce((sum, call) => sum + (call.estimatedCostUsd ?? 0), 0))}`;
+}
+
+/** "gemini-3.5-flash-lite: 1 call, 3.1 s, free tier" for each model used, joined with "; ". */
 export function summarizeCalls(calls: CallSummaryInput[]): string {
   const byModel = new Map<string, CallSummaryInput[]>();
   for (const call of calls) {
@@ -63,8 +77,7 @@ export function summarizeCalls(calls: CallSummaryInput[]): string {
   return [...byModel.entries()]
     .map(([model, group]) => {
       const seconds = group.reduce((sum, call) => sum + call.durationMs, 0) / 1000;
-      const cost = group.reduce((sum, call) => sum + (call.estimatedCostUsd ?? 0), 0);
-      return `${model}: ${group.length} call${group.length === 1 ? "" : "s"}, ${seconds.toFixed(1)} s, ≈${formatUsd(cost)}`;
+      return `${model}: ${group.length} call${group.length === 1 ? "" : "s"}, ${seconds.toFixed(1)} s, ${formatCost(group)}`;
     })
     .join("; ");
 }

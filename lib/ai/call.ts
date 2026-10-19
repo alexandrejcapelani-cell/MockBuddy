@@ -1,10 +1,9 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { GoogleGenAI, type GoogleGenAIInteraction as Interaction } from "@google/genai";
 import type { z } from "zod";
 import type { ApiKey } from "@/lib/api-key";
 import { ConfigError, serverEnv } from "@/lib/env";
-import { EFFORT, MAX_TOKENS, MODELS, type ModelTask } from "./config";
+import { MAX_TOKENS, MODELS, type ModelTask, THINKING } from "./config";
 import {
   classifyApiError,
   KEY_PROBLEM_KINDS,
@@ -13,31 +12,37 @@ import {
   RETRYABLE_KINDS,
 } from "./errors";
 import { parseModelJson } from "./json";
-import { estimateCostUsd } from "./pricing";
+import { type JsonSchema, toGeminiSchema } from "./json-schema";
+import { type BillingTier, estimateCostUsd } from "./pricing";
 
 export type { ModelFailureKind } from "./errors";
 
 // Every model call goes through generateJson. It owns retrying (the SDK's own retries
-// are off so retries can be counted), turns stop reasons and API errors into typed
+// are off so retries can be counted), turns interaction statuses and API errors into typed
 // failures, and parses and validates the JSON reply.
-
+//
+// Calls use Gemini's Interactions API with store: false, so Google keeps no copy of the
+// conversation for later retrieval; MockBuddy never needs server-side conversation state.
 
 export interface CallMetrics {
   label: string;
   model: string;
-  /** The model that actually answered; differs from `model` when a refusal fallback ran. */
+  /** The model that answered, as the API reports it. */
   servedBy: string | null;
   attempts: number;
   retries429: number;
   retriesOther: number;
   waitedMs: number;
   durationMs: number;
+  /** Prompt tokens that weren't served from Gemini's implicit cache. */
   inputTokens: number;
   outputTokens: number;
+  thoughtTokens: number;
   cacheReadTokens: number;
-  cacheWriteTokens: number;
+  /** The interaction's final status: "completed", "incomplete", "failed"… */
   stopReason: string | null;
-  /** From list prices for the model that answered; null when the call failed before any usage. */
+  billingTier: BillingTier;
+  /** 0 on the free tier; from list prices otherwise; null when the call failed before any usage. */
   estimatedCostUsd: number | null;
 }
 
@@ -57,19 +62,31 @@ export class ModelCallError extends Error {
     return RETRYABLE_KINDS.has(this.kind);
   }
 
-  /** True when the API key is missing, invalid or out of credits: fix the key, then retry. */
+  /** True when the API key is missing or invalid, or its quota is used up: fix that, then retry. */
   get keyProblem(): boolean {
     return KEY_PROBLEM_KINDS.has(this.kind);
   }
+}
+
+/** One block of prompt text. */
+export interface PromptText {
+  type: "text";
+  text: string;
+}
+
+/** Every call is a single user turn; a retry appends to it rather than replaying a model turn. */
+export interface PromptMessage {
+  role: "user";
+  content: string | PromptText[];
 }
 
 export interface JsonCall<S extends z.ZodType> {
   /** Logged with the metrics, e.g. { label: "draft", examId, batch }. */
   context: { label: string } & Record<string, string | number | undefined>;
   schema: S;
-  system: Anthropic.Beta.Messages.BetaTextBlockParam[];
-  messages: Anthropic.Beta.Messages.BetaMessageParam[];
-  /** Picks the model, effort and output cap from lib/ai/config.ts. */
+  system: string;
+  messages: PromptMessage[];
+  /** Picks the model, thinking level and output cap from lib/ai/config.ts. */
   task: ModelTask;
   /** Epoch ms by which the call must have finished (set on Vercel only). */
   deadlineAt?: number;
@@ -87,6 +104,8 @@ const MAX_ATTEMPTS = 6;
 const MAX_BACKOFF_MS = 20_000;
 /** Don't start an attempt with less time than this left before the deadline. */
 const MIN_ATTEMPT_MS = 8_000;
+/** Per-attempt limit when no request deadline applies (locally). */
+const LOCAL_TIMEOUT_MS = 600_000;
 
 export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Promise<JsonResult<z.output<S>>> {
   const started = Date.now();
@@ -101,9 +120,10 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
     durationMs: 0,
     inputTokens: 0,
     outputTokens: 0,
+    thoughtTokens: 0,
     cacheReadTokens: 0,
-    cacheWriteTokens: 0,
     stopReason: null,
+    billingTier: serverEnv("GEMINI_TIER"),
     estimatedCostUsd: null,
   };
   const finish = (outcome: string, extra: Record<string, unknown> = {}) => {
@@ -111,38 +131,44 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
     console.log(JSON.stringify({ event: "model_call", outcome, task: call.task, ...call.context, ...metrics, ...extra }));
   };
 
-  let message: Anthropic.Beta.Messages.BetaMessage;
+  let interaction: Interaction;
   try {
-    message = await sendWithRetries(call, metrics);
+    interaction = await sendWithRetries(call, metrics);
   } catch (error) {
     if (error instanceof ModelCallError) finish(error.kind, { error: error.message });
     else finish("unexpected_error", { error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 
-  metrics.servedBy = message.model;
-  metrics.stopReason = message.stop_reason;
-  metrics.inputTokens = message.usage.input_tokens;
-  metrics.outputTokens = message.usage.output_tokens;
-  metrics.cacheReadTokens = message.usage.cache_read_input_tokens ?? 0;
-  metrics.cacheWriteTokens = message.usage.cache_creation_input_tokens ?? 0;
-  metrics.estimatedCostUsd = estimateCostUsd(metrics.servedBy ?? metrics.model, metrics);
+  const usage = interaction.usage ?? {};
+  const cached = usage.total_cached_tokens ?? 0;
+  metrics.servedBy = interaction.model ?? null;
+  metrics.stopReason = interaction.status;
+  metrics.inputTokens = Math.max(0, (usage.total_input_tokens ?? 0) - cached);
+  metrics.cacheReadTokens = cached;
+  metrics.outputTokens = usage.total_output_tokens ?? 0;
+  metrics.thoughtTokens = usage.total_thought_tokens ?? 0;
+  metrics.estimatedCostUsd = estimateCostUsd(metrics.servedBy ?? metrics.model, metrics, metrics.billingTier);
 
   const fail = (kind: ModelFailureKind, text: string, details: ModelCallError["details"] = {}): never => {
     finish(kind, { error: text });
     throw new ModelCallError(kind, text, metrics, details);
   };
 
-  if (message.stop_reason === "refusal") {
-    const category = message.stop_details?.category ?? "unspecified";
-    fail("refusal", `The model declined this request (safety category: ${category}), and the fallback model declined too.`);
+  const rawText = interaction.output_text ?? "";
+  if (interaction.status === "incomplete") {
+    fail(
+      "max_tokens",
+      `The response was cut off at the ${MAX_TOKENS[call.task]}-token limit (thinking counts toward it) before the JSON was complete.`,
+      { rawText },
+    );
   }
-  const rawText = message.content
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("");
-  if (message.stop_reason === "max_tokens") {
-    fail("max_tokens", `The response was cut off at the ${MAX_TOKENS[call.task]}-token limit before the JSON was complete.`, { rawText });
+  if (interaction.status === "failed") {
+    const reasons = (interaction.errors ?? []).map((e) => e.message ?? e.code ?? "").filter(Boolean).join("; ") || "no reason given";
+    const safety = /safety|blocked|prohibited|recitation|policy/i.test(reasons);
+    fail(safety ? "refusal" : "api", safety ? `The model declined this request: ${reasons}` : `The model call failed: ${reasons}`);
   }
+  if (interaction.status !== "completed") fail("api", `The model call ended with status "${interaction.status}".`, { rawText });
 
   const parsed = parseModelJson(rawText);
   if (!parsed.ok) fail("invalid_output", parsed.error, { issues: [parsed.error], rawText });
@@ -195,17 +221,13 @@ export async function generateValidatedJson<S extends z.ZodType>(
 
 /**
  * Appends the failed reply and its problems to the last user message. The retry is a
- * fresh single-turn request rather than a replayed assistant turn, so there is no prior
- * assistant output (or thinking) in the history.
+ * fresh single-turn request rather than a replayed model turn, so there is no prior
+ * model output (or thinking) in the history.
  */
-export function withRetryNote(
-  messages: Anthropic.Beta.Messages.BetaMessageParam[],
-  previousResponse: string,
-  issues: string[],
-): Anthropic.Beta.Messages.BetaMessageParam[] {
+export function withRetryNote(messages: PromptMessage[], previousResponse: string, issues: string[]): PromptMessage[] {
   const last = messages[messages.length - 1];
-  if (!last || last.role !== "user") throw new Error("withRetryNote expects the conversation to end with a user message.");
-  const note: Anthropic.Beta.Messages.BetaTextBlockParam = {
+  if (!last) throw new Error("withRetryNote expects the conversation to end with a user message.");
+  const note: PromptText = {
     type: "text",
     text: [
       "A previous attempt at this task returned:",
@@ -217,15 +239,15 @@ export function withRetryNote(
       "Return the complete JSON object again with every problem fixed. Keep everything that was already correct.",
     ].join("\n"),
   };
-  const content = typeof last.content === "string" ? [{ type: "text" as const, text: last.content }] : last.content;
-  return [...messages.slice(0, -1), { role: "user", content: [...content, note] }];
+  return [...messages.slice(0, -1), { role: "user", content: [...textBlocks(last.content), note] }];
 }
 
-async function sendWithRetries<S extends z.ZodType>(
-  call: JsonCall<S>,
-  metrics: CallMetrics,
-): Promise<Anthropic.Beta.Messages.BetaMessage> {
-  const format = outputFormat(call.schema);
+function textBlocks(content: PromptMessage["content"]): PromptText[] {
+  return typeof content === "string" ? [{ type: "text", text: content }] : content;
+}
+
+async function sendWithRetries<S extends z.ZodType>(call: JsonCall<S>, metrics: CallMetrics): Promise<Interaction> {
+  const schema = outputSchema(call.schema);
   for (;;) {
     metrics.attempts++;
     const remaining = call.deadlineAt === undefined ? undefined : call.deadlineAt - Date.now();
@@ -236,21 +258,17 @@ async function sendWithRetries<S extends z.ZodType>(
     }
 
     try {
-      const stream = clientFor(call.apiKey).beta.messages.stream(
+      return await clientFor(call.apiKey).interactions.create(
         {
           model: MODELS[call.task],
-          max_tokens: MAX_TOKENS[call.task],
-          system: call.system,
-          messages: call.messages,
-          output_config: { effort: EFFORT[call.task], format },
-          // If Sonnet declines for policy reasons, the API re-runs the request on its
-          // default fallback model inside the same call.
-          betas: ["server-side-fallback-2026-07-01"],
-          fallbacks: "default",
+          system_instruction: call.system,
+          input: call.messages.flatMap((message) => textBlocks(message.content)),
+          store: false,
+          generation_config: { max_output_tokens: MAX_TOKENS[call.task], thinking_level: THINKING[call.task] },
+          response_format: { type: "text", mime_type: "application/json", schema },
         },
-        remaining === undefined ? {} : { timeout: remaining },
+        { retries: { strategy: "none" }, timeout_ms: remaining ?? LOCAL_TIMEOUT_MS },
       );
-      return await stream.finalMessage();
     } catch (error) {
       const failure = classify(error, call, metrics);
       if (!failure.retryable) throw failure;
@@ -270,7 +288,8 @@ async function sendWithRetries<S extends z.ZodType>(
 function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metrics: CallMetrics): ModelCallError {
   if (error instanceof ConfigError) return new ModelCallError("missing_key", MISSING_KEY_MESSAGE, metrics);
   if (
-    error instanceof Anthropic.APIConnectionTimeoutError &&
+    error instanceof Error &&
+    error.name === "APIConnectionTimeoutError" &&
     call.deadlineAt !== undefined &&
     Date.now() >= call.deadlineAt - 1_000
   ) {
@@ -282,37 +301,37 @@ function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metric
 }
 
 function backoffMs(attempt: number, retryAfter: number | undefined): number {
-  if (retryAfter !== undefined && retryAfter > 0) return Math.min(retryAfter + Math.random() * 250, 60_000);
+  if (retryAfter !== undefined && retryAfter > 0) return Math.round(Math.min(retryAfter + Math.random() * 250, 60_000));
   const base = Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** (attempt - 1));
   return Math.round(base / 2 + Math.random() * (base / 2));
 }
 
-const formats = new WeakMap<z.ZodType, { type: "json_schema"; schema: Record<string, unknown> }>();
+const schemas = new WeakMap<z.ZodType, JsonSchema>();
 
-/** The JSON Schema output format for a Zod schema, built once per schema. */
-function outputFormat(schema: z.ZodType) {
-  let format = formats.get(schema);
-  if (!format) {
-    const built = zodOutputFormat(schema);
-    format = { type: "json_schema", schema: built.schema };
-    formats.set(schema, format);
+/** The structured-output JSON Schema for a Zod schema, built once per schema. */
+function outputSchema(schema: z.ZodType): JsonSchema {
+  let converted = schemas.get(schema);
+  if (!converted) {
+    converted = toGeminiSchema(schema);
+    schemas.set(schema, converted);
   }
-  return format;
+  return converted;
 }
 
 /** The JSON Schema text for a Zod schema, for including in prompts. */
 export function schemaText(schema: z.ZodType): string {
-  return JSON.stringify(outputFormat(schema).schema, null, 2);
+  return JSON.stringify(outputSchema(schema), null, 2);
 }
 
-const globalForAnthropic = globalThis as unknown as { mockbuddyAnthropic?: Anthropic };
+const globalForGemini = globalThis as unknown as { mockbuddyGemini?: GoogleGenAI };
 
 /**
- * The server's own client (ANTHROPIC_API_KEY) is cached. A key pasted in the browser gets a
- * client for this call only, so it is never kept in memory beyond the request.
+ * The server's own client (GEMINI_API_KEY) is cached. A key pasted in the browser gets a
+ * client for this call only, so it is never kept in memory beyond the request. The key is
+ * always passed explicitly, so the SDK never falls back to GOOGLE_API_KEY from the shell.
  */
-function clientFor(apiKey: ApiKey): Anthropic {
-  if (apiKey.source === "browser") return new Anthropic({ apiKey: apiKey.value, maxRetries: 0 });
-  globalForAnthropic.mockbuddyAnthropic ??= new Anthropic({ apiKey: serverEnv("ANTHROPIC_API_KEY"), maxRetries: 0 });
-  return globalForAnthropic.mockbuddyAnthropic;
+function clientFor(apiKey: ApiKey): GoogleGenAI {
+  if (apiKey.source === "browser") return new GoogleGenAI({ apiKey: apiKey.value });
+  globalForGemini.mockbuddyGemini ??= new GoogleGenAI({ apiKey: serverEnv("GEMINI_API_KEY") });
+  return globalForGemini.mockbuddyGemini;
 }

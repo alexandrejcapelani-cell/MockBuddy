@@ -1,3 +1,4 @@
+import type { BillingTier } from "../ai/pricing.ts";
 import type { GeneratedQuestion, Level, QuestionType } from "../schemas.ts";
 
 // Shapes stored in jsonb columns by the generation pipeline (stage C).
@@ -58,7 +59,7 @@ export interface StageMetrics {
   label: string;
   /** The model requested for this call (lib/ai/config.ts). */
   model: string;
-  /** The model that answered; differs from `model` when a refusal fallback ran. */
+  /** The model that answered, as the API reports it. */
   servedBy: string | null;
   attempts: number;
   retries429: number;
@@ -67,10 +68,11 @@ export interface StageMetrics {
   durationMs: number;
   inputTokens: number;
   outputTokens: number;
+  thoughtTokens: number;
   cacheReadTokens: number;
-  cacheWriteTokens: number;
   stopReason: string | null;
-  /** Estimated from list prices; null when the call failed before any usage was reported. */
+  billingTier: BillingTier;
+  /** 0 on the free tier; from list prices otherwise; null when the call failed before any usage was reported. */
   estimatedCostUsd: number | null;
   outcome: string;
 }

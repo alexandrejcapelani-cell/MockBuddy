@@ -25,8 +25,8 @@ export class RequestError extends Error {
 
 /**
  * The key for this request's model calls: the one pasted in the browser (sent in a header,
- * never in the URL), or the server's ANTHROPIC_API_KEY when there is none. The value is
- * only passed on to the Anthropic client; never store or log it.
+ * never in the URL), or the server's GEMINI_API_KEY when there is none. The value is
+ * only passed on to the Gemini client; never store or log it.
  */
 export function requestApiKey(request: Request): ApiKey {
   const raw = request.headers.get(API_KEY_HEADER);
@@ -39,7 +39,7 @@ export function requestApiKey(request: Request): ApiKey {
 const STATUS_BY_KIND: Partial<Record<ModelFailureKind, number>> = {
   missing_key: 401,
   invalid_key: 401,
-  no_credits: 402,
+  quota_exceeded: 429,
   rate_limited: 429,
 };
 
