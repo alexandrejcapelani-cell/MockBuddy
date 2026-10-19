@@ -4,7 +4,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
 import type { ApiKey } from "@/lib/api-key";
 import { ConfigError, serverEnv } from "@/lib/env";
-import { MODEL } from "./config";
+import { EFFORT, MAX_TOKENS, MODELS, type ModelTask } from "./config";
 import {
   classifyApiError,
   KEY_PROBLEM_KINDS,
@@ -13,6 +13,7 @@ import {
   RETRYABLE_KINDS,
 } from "./errors";
 import { parseModelJson } from "./json";
+import { estimateCostUsd } from "./pricing";
 
 export type { ModelFailureKind } from "./errors";
 
@@ -20,7 +21,6 @@ export type { ModelFailureKind } from "./errors";
 // are off so retries can be counted), turns stop reasons and API errors into typed
 // failures, and parses and validates the JSON reply.
 
-export type Effort = "low" | "medium" | "high";
 
 export interface CallMetrics {
   label: string;
@@ -37,6 +37,8 @@ export interface CallMetrics {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   stopReason: string | null;
+  /** From list prices for the model that answered; null when the call failed before any usage. */
+  estimatedCostUsd: number | null;
 }
 
 export class ModelCallError extends Error {
@@ -67,8 +69,8 @@ export interface JsonCall<S extends z.ZodType> {
   schema: S;
   system: Anthropic.Beta.Messages.BetaTextBlockParam[];
   messages: Anthropic.Beta.Messages.BetaMessageParam[];
-  effort: Effort;
-  maxTokens: number;
+  /** Picks the model, effort and output cap from lib/ai/config.ts. */
+  task: ModelTask;
   /** Epoch ms by which the call must have finished (set on Vercel only). */
   deadlineAt?: number;
   /** The key for this call. A browser key is used for this call only: never stored or logged. */
@@ -90,7 +92,7 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
   const started = Date.now();
   const metrics: CallMetrics = {
     label: call.context.label,
-    model: MODEL,
+    model: MODELS[call.task],
     servedBy: null,
     attempts: 0,
     retries429: 0,
@@ -102,10 +104,11 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     stopReason: null,
+    estimatedCostUsd: null,
   };
   const finish = (outcome: string, extra: Record<string, unknown> = {}) => {
     metrics.durationMs = Date.now() - started;
-    console.log(JSON.stringify({ event: "model_call", outcome, ...call.context, ...metrics, ...extra }));
+    console.log(JSON.stringify({ event: "model_call", outcome, task: call.task, ...call.context, ...metrics, ...extra }));
   };
 
   let message: Anthropic.Beta.Messages.BetaMessage;
@@ -123,6 +126,7 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
   metrics.outputTokens = message.usage.output_tokens;
   metrics.cacheReadTokens = message.usage.cache_read_input_tokens ?? 0;
   metrics.cacheWriteTokens = message.usage.cache_creation_input_tokens ?? 0;
+  metrics.estimatedCostUsd = estimateCostUsd(metrics.servedBy ?? metrics.model, metrics);
 
   const fail = (kind: ModelFailureKind, text: string, details: ModelCallError["details"] = {}): never => {
     finish(kind, { error: text });
@@ -137,7 +141,7 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
     .join("");
   if (message.stop_reason === "max_tokens") {
-    fail("max_tokens", `The response was cut off at the ${call.maxTokens}-token limit before the JSON was complete.`, { rawText });
+    fail("max_tokens", `The response was cut off at the ${MAX_TOKENS[call.task]}-token limit before the JSON was complete.`, { rawText });
   }
 
   const parsed = parseModelJson(rawText);
@@ -234,11 +238,11 @@ async function sendWithRetries<S extends z.ZodType>(
     try {
       const stream = clientFor(call.apiKey).beta.messages.stream(
         {
-          model: MODEL,
-          max_tokens: call.maxTokens,
+          model: MODELS[call.task],
+          max_tokens: MAX_TOKENS[call.task],
           system: call.system,
           messages: call.messages,
-          output_config: { effort: call.effort, format },
+          output_config: { effort: EFFORT[call.task], format },
           // If Sonnet declines for policy reasons, the API re-runs the request on its
           // default fallback model inside the same call.
           betas: ["server-side-fallback-2026-07-01"],

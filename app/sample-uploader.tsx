@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { type CallSummaryInput, summarizeCalls } from "@/lib/ai/pricing";
 import { PICKER_EXTENSIONS } from "@/lib/files";
 import { postJson, uploadFile } from "@/lib/upload-client";
 
@@ -25,7 +26,7 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
       return;
     }
     setPhase("reading");
-    const result = await postJson(
+    const result = await postJson<{ calls: CallSummaryInput[] }>(
       "/api/blueprint",
       { storagePath: uploaded.data.storagePath, filename: file.name },
       { withApiKey: true },
@@ -36,6 +37,7 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
       return;
     }
     setPhase("done");
+    setMessage(summarizeCalls(result.data.calls));
     router.refresh();
   }
 
@@ -59,7 +61,7 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
       <p aria-live="polite">
         {phase === "uploading" && "Uploading…"}
         {phase === "reading" && "Reading the exam and extracting its blueprint (this takes up to a minute)…"}
-        {phase === "done" && "Blueprint ready."}
+        {phase === "done" && `Blueprint ready (${message}).`}
         {phase === "failed" && <span className="text-destructive">Failed: {message}</span>}
       </p>
     </div>

@@ -7,6 +7,7 @@ import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
 import { db } from "@/lib/db";
 import { chunks, exams, generationBatches, questions } from "@/lib/db/schema";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
+import { formatUsd } from "@/lib/ai/pricing";
 import type { StageMetrics } from "@/lib/generation/types";
 
 // Phase 3 quality review: every generated question with its answer, every explanation,
@@ -160,24 +161,30 @@ export default async function ExamReviewPage({ params }: { params: Promise<{ exa
 
 function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { batch: number })[]; wallClockMs: number }) {
   const stages = ["draft", "draft_retry", "critique", "revise"] as const;
+  const modelOf = (m: StageMetrics) => m.servedBy ?? m.model;
+  const cost = (calls: StageMetrics[]) => calls.reduce((sum, m) => sum + (m.estimatedCostUsd ?? 0), 0);
+  const models = [...new Set(metrics.map(modelOf))].sort();
   return (
     <section aria-labelledby="timing-heading" className="space-y-2">
       <h2 id="timing-heading" className="text-lg font-semibold">
-        Timings
+        Timings and cost
       </h2>
       <p>
         From creating the exam to its last batch finishing: {(wallClockMs / 1000).toFixed(1)} s. Longest single model call:{" "}
-        {(Math.max(0, ...metrics.map((m) => m.durationMs)) / 1000).toFixed(1)} s (Vercel allows 60 s per request).
+        {(Math.max(0, ...metrics.map((m) => m.durationMs)) / 1000).toFixed(1)} s (Vercel allows 60 s per request). Estimated cost
+        of this run: {formatUsd(cost(metrics))}.
       </p>
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b text-left">
             <th className="py-1 pr-3">Stage</th>
+            <th className="py-1 pr-3">Model</th>
             <th className="py-1 pr-3 text-right">Calls</th>
             <th className="py-1 pr-3 text-right">Avg</th>
             <th className="py-1 pr-3 text-right">Max</th>
             <th className="py-1 pr-3 text-right">429 retries</th>
-            <th className="py-1 text-right">Output tokens</th>
+            <th className="py-1 pr-3 text-right">Output tokens</th>
+            <th className="py-1 text-right">Est. cost</th>
           </tr>
         </thead>
         <tbody>
@@ -188,16 +195,50 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
             return (
               <tr key={stage} className="border-b">
                 <td className="py-1 pr-3">{stage}</td>
+                <td className="py-1 pr-3 font-mono text-xs">{[...new Set(calls.map(modelOf))].join(", ")}</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.length}</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{(durations.reduce((a, b) => a + b, 0) / calls.length / 1000).toFixed(1)} s</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{(Math.max(...durations) / 1000).toFixed(1)} s</td>
                 <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.retries429, 0)}</td>
-                <td className="py-1 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.outputTokens, 0).toLocaleString("en")}</td>
+                <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.outputTokens, 0).toLocaleString("en")}</td>
+                <td className="py-1 text-right tabular-nums">{formatUsd(cost(calls))}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <table className="w-full border-collapse">
+        <caption className="mb-1 text-left font-medium">By model</caption>
+        <thead>
+          <tr className="border-b text-left">
+            <th className="py-1 pr-3">Model</th>
+            <th className="py-1 pr-3 text-right">Calls</th>
+            <th className="py-1 pr-3 text-right">Input tokens</th>
+            <th className="py-1 pr-3 text-right">Cached input read</th>
+            <th className="py-1 pr-3 text-right">Output tokens</th>
+            <th className="py-1 text-right">Est. cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {models.map((model) => {
+            const calls = metrics.filter((m) => modelOf(m) === model);
+            return (
+              <tr key={model} className="border-b">
+                <td className="py-1 pr-3 font-mono text-xs">{model}</td>
+                <td className="py-1 pr-3 text-right tabular-nums">{calls.length}</td>
+                <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.inputTokens, 0).toLocaleString("en")}</td>
+                <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.cacheReadTokens, 0).toLocaleString("en")}</td>
+                <td className="py-1 pr-3 text-right tabular-nums">{calls.reduce((sum, m) => sum + m.outputTokens, 0).toLocaleString("en")}</td>
+                <td className="py-1 text-right tabular-nums">{formatUsd(cost(calls))}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="text-muted-foreground">
+        Costs are estimates from list prices (lib/ai/pricing.ts). Topic labelling and blueprint calls are not part of a
+        run; their model, time and cost show when each upload finishes, and in the server log.
+      </p>
     </section>
   );
 }

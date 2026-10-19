@@ -3,7 +3,6 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { type CallMetrics, generateJson, ModelCallError, schemaText, withRetryNote } from "@/lib/ai/call";
-import { EFFORT, MAX_TOKENS } from "@/lib/ai/config";
 import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { exams, generationBatches, questions } from "@/lib/db/schema";
@@ -284,19 +283,14 @@ async function callModel<S extends z.ZodType>(
   system: Anthropic.Beta.Messages.BetaTextBlockParam[],
   messages: Anthropic.Beta.Messages.BetaMessageParam[],
 ): Promise<ModelResponse<z.output<S>>> {
-  const settings = {
-    draft: { effort: EFFORT.draft, maxTokens: MAX_TOKENS.draft },
-    draft_retry: { effort: EFFORT.draft, maxTokens: MAX_TOKENS.draft },
-    critique: { effort: EFFORT.critique, maxTokens: MAX_TOKENS.critique },
-    revise: { effort: EFFORT.revise, maxTokens: MAX_TOKENS.revise },
-  }[stage];
+  const task = ({ draft: "draft", draft_retry: "draft", critique: "critique", revise: "revise" } as const)[stage];
   try {
     const result = await generateJson({
       context: { label: stage, examId: run.exam.id, batch: run.batch.batchIndex },
       schema,
       system,
       messages,
-      ...settings,
+      task,
       deadlineAt: run.deadlineAt,
       apiKey: run.apiKey,
     });

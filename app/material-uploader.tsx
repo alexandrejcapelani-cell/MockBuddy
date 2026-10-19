@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { type CallSummaryInput, summarizeCalls } from "@/lib/ai/pricing";
 import { PICKER_EXTENSIONS } from "@/lib/files";
 import { postJson, uploadFile } from "@/lib/upload-client";
 
@@ -23,6 +24,7 @@ const PHASE_TEXT: Record<Phase, string> = {
 
 interface IngestResponse {
   material: { status: string; pageCount: number | null };
+  calls: CallSummaryInput[];
 }
 
 /** Uploads material files one at a time and processes each as soon as it lands. */
@@ -53,7 +55,12 @@ export function MaterialUploader() {
         { storagePath: uploaded.data.storagePath, filename: file.name },
         { withApiKey: true },
       );
-      update(key, ingested.ok ? { phase: "done" } : { phase: "failed", message: ingested.error });
+      update(
+        key,
+        ingested.ok
+          ? { phase: "done", message: ingested.data.calls.length > 0 ? `(topic labels: ${summarizeCalls(ingested.data.calls)})` : undefined }
+          : { phase: "failed", message: ingested.error },
+      );
       router.refresh();
     }
     setBusy(false);

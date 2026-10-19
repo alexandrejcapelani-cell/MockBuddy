@@ -29,6 +29,27 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   labelling makes one call per 20 chunks in one request, so a very large file could need
   splitting into separate requests.
 
+## Models per call (2026-10-19)
+
+- One map in `lib/ai/config.ts` (`MODELS`) picks the model for each kind of call; it is the
+  only place to change model choice. This replaces the spec's single pinned model.
+
+  | Call | Model |
+  | --- | --- |
+  | Topic labelling | `claude-haiku-5-5` |
+  | Blueprint extraction | `claude-opus-5-5` |
+  | Draft, critique, revise, grading | `claude-sonnet-5-5` |
+
+- Callers name the task, not the model; effort and output caps come from the same file.
+- Every call's log line and stored metrics record the model requested, the model that
+  answered (they differ only if a refusal fallback ran), tokens, timings and an estimated
+  cost from list prices in `lib/ai/pricing.ts`. The review page splits a run's cost by
+  stage and by model; each upload shows its labelling or blueprint call's model, time and
+  cost when it finishes.
+- None of the three models accepts non-default sampling parameters, so no call sends
+  `temperature`. Haiku 5.5 has no server-side refusal fallback; with `fallbacks: "default"`
+  a declined Haiku request simply stays declined and is reported as a refusal.
+
 ## Bring your own key (BYOK)
 
 - **BYOK is the intended model for anyone else using MockBuddy, so the deployed app never
@@ -68,7 +89,7 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 - Dropped questions (failed validation twice, or still failing after revise) are replaced
   by at most 2 extra batches, each through the full pipeline and drawn from unused chunks.
   If the exam is still short, it ships short and the UI says so.
-- No `temperature` parameter: Sonnet 5.5 rejects non-default values, and 1.0 is the
+- No `temperature` parameter: the models reject non-default values, and 1.0 is the
   default. Variety comes from the seed offset, the exclusions and chunk choice. Reasoning
   effort is set explicitly per call.
 - JSON comes from structured outputs (`output_config.format`) built from the same Zod

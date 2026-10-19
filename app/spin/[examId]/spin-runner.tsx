@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BatchView, ExamProgress } from "@/lib/generation/context";
+import { formatUsd } from "@/lib/ai/pricing";
 import { type GenerationResult, MAX_PARALLEL_BATCHES, runGeneration } from "@/lib/generation/runner";
 
 const STAGE_TEXT: Record<BatchView["stage"], string> = {
@@ -69,8 +70,9 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
       waitedMs: acc.waitedMs + m.waitedMs,
       inputTokens: acc.inputTokens + m.inputTokens,
       outputTokens: acc.outputTokens + m.outputTokens,
+      costUsd: acc.costUsd + (m.estimatedCostUsd ?? 0),
     }),
-    { calls: 0, retries429: 0, waitedMs: 0, inputTokens: 0, outputTokens: 0 },
+    { calls: 0, retries429: 0, waitedMs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
   );
 
   return (
@@ -133,7 +135,8 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
       <p className="text-sm text-muted-foreground">
         {elapsed !== null && `Wall clock ${elapsed.toFixed(1)} s · `}
         {totals.calls} model calls · {totals.retries429} rate-limit retries ({(totals.waitedMs / 1000).toFixed(1)} s waiting) ·{" "}
-        {totals.inputTokens.toLocaleString("en")} input / {totals.outputTokens.toLocaleString("en")} output tokens · up to{" "}
+        {totals.inputTokens.toLocaleString("en")} input / {totals.outputTokens.toLocaleString("en")} output tokens · about{" "}
+        {formatUsd(totals.costUsd)} · up to{" "}
         {MAX_PARALLEL_BATCHES} batches at once
       </p>
 

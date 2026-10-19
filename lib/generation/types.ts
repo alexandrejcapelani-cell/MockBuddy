@@ -52,9 +52,13 @@ export interface SlotOutcome {
   reason: string | null;
 }
 
+/** One model call made by a stage (the call wrapper's metrics, plus the stage and outcome). */
 export interface StageMetrics {
   stage: Exclude<BatchStage, "done" | "failed">;
   label: string;
+  /** The model requested for this call (lib/ai/config.ts). */
+  model: string;
+  /** The model that answered; differs from `model` when a refusal fallback ran. */
   servedBy: string | null;
   attempts: number;
   retries429: number;
@@ -66,6 +70,8 @@ export interface StageMetrics {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   stopReason: string | null;
+  /** Estimated from list prices; null when the call failed before any usage was reported. */
+  estimatedCostUsd: number | null;
   outcome: string;
 }
 

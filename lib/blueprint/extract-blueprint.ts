@@ -1,7 +1,6 @@
 import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { type CallMetrics, generateValidatedJson, schemaText } from "@/lib/ai/call";
-import { EFFORT, MAX_TOKENS } from "@/lib/ai/config";
 import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { blueprints } from "@/lib/db/schema";
@@ -47,8 +46,7 @@ export async function createBlueprint(
       schema: BlueprintSchema,
       system: [{ type: "text", text: BLUEPRINT_SYSTEM }],
       messages: [{ role: "user", content: blueprintPrompt(paperText, filename, schemaText(BlueprintSchema)) }],
-      effort: EFFORT.blueprint,
-      maxTokens: MAX_TOKENS.blueprint,
+      task: "blueprint",
       deadlineAt,
       apiKey,
     },

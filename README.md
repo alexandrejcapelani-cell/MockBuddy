@@ -5,8 +5,9 @@ sample exam. The product spec is [MOCKBUDDY_SPEC.md](MOCKBUDDY_SPEC.md); decisio
 change or refine it are in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 Stack: Next.js 15 (App Router) · Tailwind + shadcn/ui · Postgres (embedded PGlite locally,
-Supabase later) · Drizzle ORM + postgres-js · Anthropic API (`claude-sonnet-5-5`) · Zod ·
-KaTeX · unpdf.
+Supabase later) · Drizzle ORM + postgres-js · Anthropic API (Haiku 5.5 for topic labels,
+Opus 5.5 for the blueprint, Sonnet 5.5 for generation; see `MODELS` in `lib/ai/config.ts`) ·
+Zod · KaTeX · unpdf.
 
 ## Status
 
@@ -57,7 +58,8 @@ running: they share the `.next` folder.
 ## Where things live
 
 - `lib/ai/`: the single model-call wrapper (structured JSON output, 429 backoff with retry
-  counts, refusal handling, LaTeX repair) and model settings.
+  counts, refusal handling, LaTeX repair), the per-task model map and settings
+  (`config.ts`), and cost estimates (`pricing.ts`).
 - `lib/ingest/`: extraction, chunking and topic labels (stage A).
 - `lib/blueprint/`: blueprint extraction and its verbatim check (stage B).
 - `lib/generation/`: slot plan, prompts, validation, the draft/critique/revise stage

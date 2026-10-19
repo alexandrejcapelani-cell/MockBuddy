@@ -1,6 +1,5 @@
 import "server-only";
 import { type CallMetrics, generateValidatedJson, schemaText } from "@/lib/ai/call";
-import { EFFORT, MAX_TOKENS } from "@/lib/ai/config";
 import type { ApiKey } from "@/lib/api-key";
 import { TopicLabelsSchema } from "@/lib/schemas";
 import {
@@ -34,8 +33,7 @@ export async function labelTopics(
         schema: TopicLabelsSchema,
         system: [{ type: "text", text: TOPIC_LABEL_SYSTEM }],
         messages: [{ role: "user", content: topicLabelPrompt(batch, [...known].sort(), schemaText(TopicLabelsSchema)) }],
-        effort: EFFORT.topicLabels,
-        maxTokens: MAX_TOKENS.topicLabels,
+        task: "topicLabels",
         deadlineAt: context.deadlineAt,
         apiKey: context.apiKey,
       },

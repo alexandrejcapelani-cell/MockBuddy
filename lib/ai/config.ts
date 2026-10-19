@@ -1,24 +1,42 @@
 // Model settings for every call MockBuddy makes, in one place so they can be tuned
-// against measured quality and timings.
+// against measured quality, timings and cost.
 
-export const MODEL = "claude-sonnet-5-5";
+/**
+ * Which model each kind of call uses. This is the one place to change model choice;
+ * prices for estimating cost are in pricing.ts.
+ */
+export const MODELS = {
+  topicLabels: "claude-haiku-5-5",
+  blueprint: "claude-opus-5-5",
+  draft: "claude-sonnet-5-5",
+  critique: "claude-sonnet-5-5",
+  revise: "claude-sonnet-5-5",
+  grading: "claude-sonnet-5-5",
+} as const;
 
-/** Reasoning effort per call. Sonnet 5.5 defaults to "high" when unset. */
-export const EFFORT = {
+export type ModelTask = keyof typeof MODELS;
+export type ModelId = (typeof MODELS)[ModelTask];
+export type Effort = "low" | "medium" | "high";
+
+/** Reasoning effort per call. Set explicitly: the defaults differ by model. */
+export const EFFORT: Record<ModelTask, Effort> = {
   topicLabels: "low",
   blueprint: "medium",
   draft: "medium",
   critique: "medium",
   revise: "medium",
-} as const;
+  grading: "medium",
+};
 
-export const MAX_TOKENS = {
+/** Output cap per call. Thinking counts toward it, so leave room above the JSON itself. */
+export const MAX_TOKENS: Record<ModelTask, number> = {
   topicLabels: 8_000,
   blueprint: 24_000,
   draft: 32_000,
   critique: 16_000,
   revise: 24_000,
-} as const;
+  grading: 8_000,
+};
 
 /** Vercel's function limit. Locally nothing enforces it, so requests only warn past it. */
 export const SERVERLESS_LIMIT_MS = 60_000;
