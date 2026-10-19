@@ -2,7 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ModelCallError, type ModelFailureKind } from "@/lib/ai/call";
-import { API_KEY_HEADER, type ApiKey, checkApiKeyFormat } from "@/lib/api-key";
+import { API_KEY_HEADER, type ApiKey } from "@/lib/api-key";
 import { ConfigError } from "@/lib/env";
 import { DocumentError } from "@/lib/ingest/extract";
 import { IngestError } from "@/lib/ingest/ingest";
@@ -26,14 +26,12 @@ export class RequestError extends Error {
 /**
  * The key for this request's model calls: the one pasted in the browser (sent in a header,
  * never in the URL), or the server's GEMINI_API_KEY when there is none. The value is
- * only passed on to the Gemini client; never store or log it.
+ * passed on to the Gemini client as sent, without judging its format: Google decides
+ * whether it's valid. Never store or log it.
  */
 export function requestApiKey(request: Request): ApiKey {
-  const raw = request.headers.get(API_KEY_HEADER);
-  if (raw === null || raw.trim() === "") return { source: "server" };
-  const check = checkApiKeyFormat(raw);
-  if (!check.ok) throw new RequestError(`The API key saved in this browser is malformed: ${check.message}`, 400, "invalid_key");
-  return { source: "browser", value: check.key };
+  const value = request.headers.get(API_KEY_HEADER)?.trim();
+  return value ? { source: "browser", value } : { source: "server" };
 }
 
 const STATUS_BY_KIND: Partial<Record<ModelFailureKind, number>> = {

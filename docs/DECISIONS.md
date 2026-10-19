@@ -121,8 +121,14 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   owner's.
 - The app page (`/app`) has a key field for a Gemini API key from Google AI Studio. The key
   is stored only in that browser's `localStorage` (`mockbuddy.geminiApiKey`), shown masked
-  (`AIza…` plus the last 4 characters) with a Clear button. A key saved under the old
+  (`…` plus the last 4 characters) with a Clear button. A key saved under the old
   Anthropic name is deleted from the browser the first time the page loads.
+- **No key format checks.** Google's docs don't specify a key format, and it has changed:
+  AI Studio has issued auth keys since 28 May 2026 (the key in use here starts `AQ.`;
+  older keys started `AIza`). Any non-empty paste, trimmed, is accepted in the browser and passed on by
+  the server unchanged; Google's API decides whether it's valid. The SDK refuses one kind
+  itself, Live-API ephemeral tokens (`auth_tokens/…`), and that gets its own invalid-key
+  message.
 - The browser sends it in the `x-gemini-key` header, and only on requests that call the
   model (material ingest, blueprint, generate, grading). Never in a URL or query string.
   The SDK passes it on to Google in the `x-goog-api-key` header, not the URL.
@@ -134,8 +140,9 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   local runs keep using the owner's key without pasting anything.
 - Distinct failures, each with its own message and status:
   - missing key (401);
-  - invalid key (401): Google's `API_KEY_INVALID`, a key blocked as leaked, or a 401/403;
-    400 for a malformed paste, including an Anthropic key;
+  - invalid key (401): whatever Google rejects (`API_KEY_INVALID`, a 401, a key blocked as
+    leaked, or a 403 such as an unrestricted standard key), with Google's own reason quoted
+    and the key cut out of it;
   - quota exceeded (429): the day's free-tier requests are used up (reset at midnight
     Pacific time), the model has no free quota (`limit: 0`), a spending cap was reached, or
     the free tier isn't available in the user's region;

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { checkApiKeyFormat, maskApiKey } from "../api-key.ts";
+import { maskApiKey, normalizeApiKey } from "../api-key.ts";
 import { classifyApiError } from "./errors.ts";
 
-const browser = { source: "browser", value: `AIza${"k".repeat(35)}` } as const;
+const browser = { source: "browser", value: "AQ.Ab8RN6test-pasted-key-0123456789" } as const;
 const server = { source: "server" } as const;
 const counts = { attempts: 6, retries429: 5 };
 
@@ -36,6 +36,19 @@ describe("classifyApiError", () => {
     assert.equal(pasted.kind, "invalid_key");
     assert.match(pasted.message, /the API key you pasted/);
     assert.match(classifyApiError(invalid(), server, counts)!.message, /GEMINI_API_KEY from \.env\.local/);
+  });
+
+  test("a plain 401 from Google is an invalid key and quotes Google's reason", () => {
+    const result = classifyApiError(apiError(401, "UNAUTHENTICATED", "Request had invalid authentication credentials."), browser, counts)!;
+    assert.equal(result.kind, "invalid_key");
+    assert.match(result.message, /Google rejected the API key you pasted/);
+    assert.match(result.message, /Google said: Request had invalid authentication credentials\./);
+  });
+
+  test("an ephemeral Live-API token, refused by the SDK before sending, is an invalid key", () => {
+    const result = classifyApiError(new Error("Ephemeral tokens are only supported by the live API."), browser, counts)!;
+    assert.equal(result.kind, "invalid_key");
+    assert.match(result.message, /^The API key you pasted is an ephemeral token/);
   });
 
   test("a leaked key and a 403 are key problems too", () => {
@@ -107,16 +120,36 @@ describe("classifyApiError", () => {
 
   test("non-SDK errors are left alone", () => assert.equal(classifyApiError(new Error("boom"), server, counts), null));
 
-  test("messages never contain the key", () => {
-    const result = classifyApiError(apiError(400, "INVALID_ARGUMENT", "API key not valid.", [{ reason: "API_KEY_INVALID" }]), browser, counts)!;
-    assert.ok(!result.message.includes(browser.value));
+  test("messages never contain the key, even when Google's own message quotes it", () => {
+    const invalid = classifyApiError(apiError(400, "INVALID_ARGUMENT", "API key not valid.", [{ reason: "API_KEY_INVALID" }]), browser, counts)!;
+    assert.ok(!invalid.message.includes(browser.value));
+    const suspended = classifyApiError(
+      apiError(403, "PERMISSION_DENIED", `Permission denied: Consumer 'api_key:${browser.value}' has been suspended.`),
+      browser,
+      counts,
+    )!;
+    assert.ok(!suspended.message.includes(browser.value), suspended.message);
+    assert.match(suspended.message, /api_key:\[redacted\]/);
+    const serverKey = classifyApiError(apiError(403, "PERMISSION_DENIED", "Consumer 'api_key:AQ.Ab8serverkey123' has been suspended."), server, counts)!;
+    assert.ok(!serverKey.message.includes("AQ.Ab8serverkey123"), serverKey.message);
   });
 });
 
-describe("API key format and masking", () => {
-  const key = `AIza${"a".repeat(31)}WXYZ`;
-  test("accepts a well-formed key and trims whitespace", () => assert.deepEqual(checkApiKeyFormat(`  ${key}\n`), { ok: true, key }));
-  test("rejects a non-Gemini key", () => assert.match((checkApiKeyFormat("sk-ant-api03-123") as { message: string }).message, /start with AIza/));
-  test("rejects a truncated key", () => assert.match((checkApiKeyFormat("AIzaSyAbc") as { message: string }).message, /cut off/));
-  test("masks all but the last 4 characters", () => assert.equal(maskApiKey(key), "AIza…WXYZ"));
+describe("API key handling: no format checks, Google decides", () => {
+  test("accepts an AI Studio auth key and trims whitespace", () => {
+    const key = "AQ.Ab8RN6exampleAuthKeyWXYZ";
+    assert.deepEqual(normalizeApiKey(`  ${key}\n`), { ok: true, key });
+  });
+  test("accepts any other non-empty string, whatever its prefix or length", () => {
+    for (const key of ["AIzaSyLegacyStyleKey0123456789abcdefghi", "sk-ant-api03-not-a-gemini-key", "abc"]) {
+      assert.deepEqual(normalizeApiKey(key), { ok: true, key });
+    }
+  });
+  test("refuses only an empty paste", () => {
+    for (const blank of ["", "   ", "\n\t"]) assert.equal(normalizeApiKey(blank).ok, false);
+  });
+  test("masks all but the last 4 characters, with no assumed prefix", () => {
+    assert.equal(maskApiKey("AQ.Ab8RN6exampleAuthKeyWXYZ"), "…WXYZ");
+    assert.equal(maskApiKey("short"), "…");
+  });
 });

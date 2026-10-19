@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { checkApiKeyFormat, maskApiKey } from "@/lib/api-key";
+import { maskApiKey, normalizeApiKey } from "@/lib/api-key";
 import { clearStoredApiKey, storeApiKey, useStoredApiKey } from "@/lib/api-key-client";
 
 /**
@@ -14,7 +14,7 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
   const [error, setError] = useState<string | null>(null);
 
   function save() {
-    const check = checkApiKeyFormat(draft);
+    const check = normalizeApiKey(draft);
     if (!check.ok) {
       setError(check.message);
       return;
@@ -62,7 +62,7 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="AIza…"
+            placeholder="Paste your key"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             aria-describedby="api-key-help"

@@ -67,6 +67,13 @@ interface SdkHttpError extends Error {
 /** Null when `error` is not an error from the Gemini SDK. */
 export function classifyApiError(error: unknown, key: ApiKey, context: { attempts: number; retries429: number }): ClassifiedError | null {
   if (!(error instanceof Error)) return null;
+  // The SDK refuses Live-API ephemeral tokens (auth_tokens/…) itself, before sending anything.
+  if (/ephemeral tokens are only supported/i.test(error.message)) {
+    return {
+      kind: "invalid_key",
+      message: `${capitalize(whoseKey(key))} is an ephemeral token, which only works with Gemini's Live API. Use an API key from Google AI Studio instead.`,
+    };
+  }
   if (error.name === "APIConnectionTimeoutError") return { kind: "unavailable", message: "The model call timed out." };
   if (error.name === "APIConnectionError" || error.name === "APIUserAbortError") {
     return { kind: "unavailable", message: `Couldn't reach the Gemini API: ${error.message}` };
@@ -74,18 +81,19 @@ export function classifyApiError(error: unknown, key: ApiKey, context: { attempt
   if (!isHttpError(error)) return null;
 
   const rpc = rpcStatus(error);
-  const detail = rpc.message ?? error.message;
+  const detail = redactKey(rpc.message ?? error.message, key);
   const reasons = (rpc.details ?? []).flatMap((d) => (d.reason ? [d.reason] : []));
   const quotaIds = (rpc.details ?? []).flatMap((d) => d.violations ?? []).flatMap((v) => (v.quotaId ? [v.quotaId] : []));
   const retryAfter = retryDelayMs(rpc) ?? retryAfterMs(error.headers);
 
-  if (reasons.some((r) => r.startsWith("API_KEY_")) || /api key not valid|api key expired/i.test(detail)) {
+  if (error.status === 401 || reasons.some((r) => r.startsWith("API_KEY_")) || /api key not valid|api key expired/i.test(detail)) {
+    const fix =
+      key.source === "browser"
+        ? "Clear it at /app and paste a valid key from Google AI Studio."
+        : "Fix it in .env.local, or paste a valid key at /app.";
     return {
       kind: "invalid_key",
-      message:
-        key.source === "browser"
-          ? "Google rejected the API key you pasted: it's wrong, expired or has been deleted. Clear it at /app and paste a valid key from Google AI Studio."
-          : "Google rejected GEMINI_API_KEY from .env.local: it's wrong, expired or has been deleted. Fix it in .env.local, or paste a valid key at /app.",
+      message: `Google rejected ${whoseKey(key)}: it's wrong, expired or has been deleted. ${fix} Google said: ${firstLine(detail)}`,
     };
   }
   if (/leaked/i.test(detail)) {
@@ -94,10 +102,10 @@ export function classifyApiError(error: unknown, key: ApiKey, context: { attempt
       message: `Google has blocked ${whoseKey(key)} because it was reported as leaked. Create a new key in Google AI Studio and use that instead.`,
     };
   }
-  if (error.status === 401 || error.status === 403) {
+  if (error.status === 403) {
     return {
       kind: "invalid_key",
-      message: `Google refused ${whoseKey(key)} for this request (HTTP ${error.status}): ${detail} The key's project may not have the Gemini API enabled or may not have access to this model.`,
+      message: `Google refused ${whoseKey(key)} for this request (HTTP 403): ${firstLine(detail)} Google rejects unrestricted standard keys and long-unused ones; the key's project may also not have the Gemini API enabled or access to this model.`,
     };
   }
 
@@ -148,6 +156,19 @@ function rpcStatus(error: SdkHttpError): RpcStatus {
     body = body.error as { error?: unknown };
   }
   return body && typeof body === "object" ? (body as RpcStatus) : {};
+}
+
+/**
+ * Google's messages can quote the key (e.g. "Consumer 'api_key:…' has been suspended"), and
+ * these messages are shown and logged, so the key is cut out before anything uses them.
+ */
+function redactKey(text: string, key: ApiKey): string {
+  const withoutValue = key.source === "browser" ? text.split(key.value).join("[your key]") : text;
+  return withoutValue.replace(/api_key:[^\s'"]+/gi, "api_key:[redacted]");
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function firstLine(text: string): string {
