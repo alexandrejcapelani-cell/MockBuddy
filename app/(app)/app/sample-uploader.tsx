@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { DropZone } from "@/components/drop-zone";
 import { type CallSummaryInput, summarizeCalls } from "@/lib/ai/pricing";
-import { PICKER_EXTENSIONS } from "@/lib/files";
 import { postJson, uploadFile } from "@/lib/upload-client";
 
 type Phase = "idle" | "uploading" | "reading" | "done" | "failed";
@@ -42,27 +42,20 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
   }
 
   return (
-    <div className="space-y-1 text-sm">
-      <label className="block">
-        <span className="font-medium">{hasBlueprint ? "Replace the sample exam" : "Add one past exam or mock"}</span>{" "}
-        <span className="text-muted-foreground">(PDF, TXT or Markdown)</span>
-        <input
-          type="file"
-          accept={PICKER_EXTENSIONS}
-          disabled={busy}
-          className="mt-1 block"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            void handleFile(file);
-          }}
-        />
-      </label>
+    <div className="space-y-2 text-sm">
+      <DropZone
+        title={hasBlueprint ? "Drop a different sample exam" : "Drop one past exam or mock"}
+        hint={hasBlueprint ? "It replaces the current one." : "PDF, TXT or Markdown. Just one file."}
+        multiple={false}
+        disabled={busy}
+        tone="red"
+        onFiles={(files) => void handleFile(files[0])}
+      />
       <p aria-live="polite">
         {phase === "uploading" && "Uploading…"}
-        {phase === "reading" && "Reading the exam and extracting its blueprint (this takes up to a minute)…"}
-        {phase === "done" && `Blueprint ready (${message}).`}
-        {phase === "failed" && <span className="text-destructive">Failed: {message}</span>}
+        {phase === "reading" && "Reading the exam and extracting its blueprint (up to a minute)…"}
+        {phase === "done" && <span className="text-dim">Blueprint ready ({message}).</span>}
+        {phase === "failed" && <span className="text-error">Failed: {message}</span>}
       </p>
     </div>
   );

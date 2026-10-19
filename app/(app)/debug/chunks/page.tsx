@@ -36,7 +36,7 @@ export default async function ChunksPage() {
   return (
     <main className="mx-auto max-w-5xl space-y-8 p-6 text-sm">
       <header className="space-y-1">
-        <Link href="/" className="underline">
+        <Link href="/app" className="underline">
           ← Back
         </Link>
         <h1 className="text-2xl font-semibold">Chunks</h1>

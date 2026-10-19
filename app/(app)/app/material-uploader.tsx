@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { DropZone } from "@/components/drop-zone";
 import { type CallSummaryInput, summarizeCalls } from "@/lib/ai/pricing";
-import { PICKER_EXTENSIONS } from "@/lib/files";
 import { postJson, uploadFile } from "@/lib/upload-client";
 
 type Phase = "waiting" | "uploading" | "processing" | "done" | "failed";
@@ -67,29 +67,21 @@ export function MaterialUploader() {
   }
 
   return (
-    <div className="space-y-2">
-      <label className="block text-sm">
-        <span className="font-medium">Add material files</span>{" "}
-        <span className="text-muted-foreground">(PDF, TXT or Markdown; several at once is fine)</span>
-        <input
-          type="file"
-          multiple
-          accept={PICKER_EXTENSIONS}
-          disabled={busy}
-          className="mt-1 block text-sm"
-          onChange={(event) => {
-            const files = Array.from(event.currentTarget.files ?? []);
-            event.currentTarget.value = "";
-            void handleFiles(files);
-          }}
-        />
-      </label>
+    <div className="space-y-3">
+      <DropZone
+        title="Drop your slides here"
+        hint="PDF, TXT or Markdown. As many files as you like."
+        multiple
+        disabled={busy}
+        tone="felt"
+        onFiles={(files) => void handleFiles(files)}
+      />
       {progress.length > 0 && (
         <ul aria-live="polite" className="space-y-1 text-sm">
           {progress.map((item) => (
             <li key={item.key}>
-              <span className="font-medium">{item.name}</span>: {PHASE_TEXT[item.phase]}
-              {item.message && <span className={item.phase === "failed" ? " text-destructive" : ""}> {item.message}</span>}
+              <span className="font-semibold">{item.name}</span>: {PHASE_TEXT[item.phase]}
+              {item.message && <span className={item.phase === "failed" ? " text-error" : " text-dim"}> {item.message}</span>}
             </li>
           ))}
         </ul>

@@ -33,16 +33,16 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
     : "This server has no ANTHROPIC_API_KEY, so nothing that calls the model will work until you paste a key.";
 
   return (
-    <section aria-labelledby="api-key-heading" className="space-y-2 rounded-lg border px-3 py-3 text-sm">
-      <h2 id="api-key-heading" className="font-semibold">
+    <section aria-labelledby="api-key-heading" className="panel space-y-2 px-4 py-3 text-sm">
+      <h2 id="api-key-heading" className="font-sans text-base font-semibold">
         Anthropic API key
       </h2>
       {stored ? (
         <div className="flex flex-wrap items-center gap-3">
           <p>
-            Using your key <code className="font-mono">{maskApiKey(stored)}</code>
+            Using your key <code className="font-mono text-gold-text">{maskApiKey(stored)}</code>
           </p>
-          <button type="button" className="underline" onClick={clearStoredApiKey}>
+          <button type="button" className="btn-quiet text-sm" onClick={clearStoredApiKey}>
             Clear
           </button>
         </div>
@@ -66,19 +66,19 @@ export function ApiKeyField({ serverKeyConfigured }: { serverKeyConfigured: bool
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             aria-describedby="api-key-help"
-            className="min-w-64 flex-1 rounded border px-2 py-1 font-mono"
+            className="min-w-64 flex-1 rounded-full border border-input bg-felt-deep px-4 py-2 font-mono text-cream placeholder:text-dim"
           />
-          <button type="submit" className="rounded border px-3 py-1 font-medium">
+          <button type="submit" className="btn-gold text-sm">
             Use this key
           </button>
         </form>
       )}
-      <p id="api-key-help" className="text-muted-foreground">
+      <p id="api-key-help" className="text-dim">
         Optional. Your key is kept only in this browser and sent only with requests that call the model; it is never
         saved on the server. {stored ? "Clear it to go back to the server's key." : fallback}
       </p>
       {error && (
-        <p role="alert" className="text-destructive">
+        <p role="alert" className="text-error">
           {error}
         </p>
       )}

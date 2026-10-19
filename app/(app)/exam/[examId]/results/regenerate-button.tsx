@@ -23,21 +23,16 @@ export function RegenerateButton({ examId }: { examId: string }) {
   }
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        onClick={() => void regenerate()}
-        disabled={pending}
-        className="rounded border-2 border-foreground px-6 py-3 text-lg font-semibold disabled:opacity-60"
-      >
-        {pending ? "Setting up…" : "REGENERATE"}
+    <div className="flex flex-col items-center gap-3 text-center">
+      <button type="button" onClick={() => void regenerate()} disabled={pending} className="btn-gold px-10 py-4 text-xl">
+        {pending ? "Shuffling…" : "Regenerate"}
       </button>
-      <p className="text-sm text-muted-foreground">
-        A completely new mock from the same material and sample exam, at the same length and difficulty, written to
-        avoid every question in this mock and the ones before it.
+      <p className="max-w-md text-sm text-dim">
+        A completely new mock from the same material and sample exam, at the same length and difficulty, written to avoid every
+        question in this mock and the ones before it.
       </p>
       {error && (
-        <p role="alert" className="text-destructive">
+        <p role="alert" className="text-error">
           {error}
         </p>
       )}

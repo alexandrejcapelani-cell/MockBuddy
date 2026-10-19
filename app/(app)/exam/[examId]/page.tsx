@@ -17,26 +17,21 @@ export default async function ExamPage({ params }: { params: Promise<{ examId: s
   });
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 p-6">
-      <header className="space-y-1">
-        <Link href="/" className="text-sm underline">
-          ← Back
-        </Link>
-        <h1 className="text-2xl font-semibold">Your mock</h1>
-        <p className="text-sm text-muted-foreground">
+    <main className="mx-auto max-w-3xl space-y-6 px-4 py-8">
+      <header className="space-y-1 text-center">
+        <h1 className="font-display text-4xl font-bold text-gold-text">The hand</h1>
+        <p className="text-dim">
           {questions.length} questions · {DIFFICULTY_NAMES[exam.difficulty]}
         </p>
       </header>
       {exam.status === "generating" ? (
-        <p>
-          This mock is still being generated.{" "}
-          <Link href={`/spin/${examId}`} className="underline">
-            Go back to the generation page
-          </Link>
-          .
+        <p className="panel p-5 text-center">
+          This mock is still being dealt. <Link href={`/spin/${examId}`}>Go back to the spin</Link>.
         </p>
       ) : questions.length === 0 ? (
-        <p>This mock has no questions: every draft failed its checks. Generate a new one from the home page.</p>
+        <p className="panel p-5 text-center">
+          This mock has no questions: every draft failed its checks. <Link href="/app">Deal a new one</Link>.
+        </p>
       ) : (
         <ExamTaker examId={examId} initial={questions} />
       )}

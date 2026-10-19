@@ -14,7 +14,7 @@ export async function removeMaterial(materialId: string): Promise<{ error: strin
     .delete(materials)
     .where(and(eq(materials.id, materialId), eq(materials.userId, userId)))
     .returning({ storagePath: materials.storagePath });
-  revalidatePath("/");
+  revalidatePath("/app");
   if (!removed) return { error: "That file was already removed." };
   await storage.remove(removed.storagePath);
   return { error: null };

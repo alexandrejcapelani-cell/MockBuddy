@@ -246,6 +246,21 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 
 ## Design (phase 6)
 
-- Lighten `--chip-dim` and gold-on-`--felt` text to reach 4.5:1. `--chip-red` is only a
-  fill, with cream text on it.
+- Contrast fixes to the spec's palette, all checked by `lib/theme.test.ts` against the
+  values in `app/globals.css`: `--chip-dim` is #BACAC1 (was #9CAFA5, 3.7:1 on felt); gold
+  text uses `--gold-text` #E6C65A (the spec's `--gold` stays for fills, borders and the
+  lever); `--chip-red` is only a fill under cream text or text on cream card faces; card
+  faces have their own ink colours; error text is #FFB4A8.
+- Type: Playfair Display for headings and the payout display, Barlow Semi Condensed for
+  body, tabular figures wherever numbers change.
+- Everything animated is decorative and nothing waits for it: the exam link appears the
+  moment generation finishes, and card animations move a card without ever hiding it.
+- prefers-reduced-motion: the slot machine becomes static reels plus a progress bar,
+  chips and count-ups are skipped, and CSS animations are switched off globally.
+- Sound (win chime, reel click) is synthesised with Web Audio, off by default, and the
+  choice is remembered in localStorage.
+- Every selector is a native radio group under its styling (count chips, difficulty
+  lever), so arrow keys work; focus rings are gold-bright (at least 3:1 on every surface).
+- The table moved from `/` to `/app`; app screens share a header through the `(app)`
+  route group.
 - shadcn/ui's `tw-animate-css` and Base UI stay; no MockBuddy animation uses them.

@@ -43,3 +43,4 @@ next-env.d.ts
 
 # local database and uploads (npm run dev)
 /.data/
+/.data-user/

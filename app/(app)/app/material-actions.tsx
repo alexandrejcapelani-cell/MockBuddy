@@ -33,17 +33,23 @@ export function MaterialActions({ id, filename, failed }: { id: string; filename
   }
 
   return (
-    <span className="inline-flex flex-wrap items-center gap-2">
+    <span className="inline-flex flex-wrap items-center gap-3 pt-1">
       {failed && (
-        <button type="button" className="underline" disabled={pending !== null} onClick={retry}>
+        <button type="button" className="text-gold-text underline underline-offset-4" disabled={pending !== null} onClick={retry}>
           {pending === "retry" ? "Retrying…" : "Retry"}
         </button>
       )}
-      <button type="button" className="underline" disabled={pending !== null} onClick={remove}>
+      <button
+        type="button"
+        className="text-dim underline underline-offset-4 hover:text-cream"
+        disabled={pending !== null}
+        onClick={remove}
+        aria-label={`Remove ${filename}`}
+      >
         {pending === "remove" ? "Removing…" : "Remove"}
       </button>
       {error && (
-        <span role="alert" className="text-destructive">
+        <span role="alert" className="text-error">
           {error}
         </span>
       )}
