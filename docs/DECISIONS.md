@@ -29,6 +29,30 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   labelling makes one call per 20 chunks in one request, so a very large file could need
   splitting into separate requests.
 
+## Bring your own key (BYOK)
+
+- **BYOK is the intended model for anyone else using MockBuddy, so the deployed app never
+  spends the owner's credits.** On the deployment `ANTHROPIC_API_KEY` stays unset: a request
+  without a pasted key then fails with "missing key" instead of falling back to the owner's.
+- The home page has a key field. The key is stored only in that browser's `localStorage`,
+  shown masked (`sk-ant-…` plus the last 4 characters) with a Clear button.
+- The browser sends it in the `x-anthropic-key` header, and only on requests that call the
+  model (material ingest, blueprint, generate, and grading in phase 4). Never in a URL or
+  query string.
+- The server uses it for that request's Anthropic client only: a fresh client per call,
+  never cached. It is never stored, written to the database or logged; failure messages
+  name which key was used, never its value.
+- Without the header the server falls back to `ANTHROPIC_API_KEY` from `.env.local`, so
+  local runs keep using the owner's account without pasting anything.
+- Distinct failures, each with its own message and status: missing key (401), invalid key
+  (401 from Anthropic, or 400 for a malformed paste), out of credits or spend limit reached
+  (402), rate limited (429, after the automatic backoff retries).
+- A key problem doesn't fail a generation batch: the batch stays at its stage, so after
+  fixing the key, "Resume generation" carries on where it stopped.
+- Known limits: `localStorage` is readable by any script running on the app's origin, so
+  the page must never load third-party scripts; and users must trust the deployment,
+  since their key passes through its server.
+
 ## Generation pipeline
 
 - Draft, critique and revise stay three separate model calls. Each runs in its own HTTP

@@ -2,6 +2,7 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { type CallMetrics, generateValidatedJson, schemaText } from "@/lib/ai/call";
 import { EFFORT, MAX_TOKENS } from "@/lib/ai/config";
+import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { blueprints } from "@/lib/db/schema";
 import { classifyUpload, isOwnedStoragePath } from "@/lib/files";
@@ -24,6 +25,7 @@ export async function createBlueprint(
   storagePath: string,
   filename: string,
   deadlineAt: number | undefined,
+  apiKey: ApiKey,
 ): Promise<{ blueprint: BlueprintRow; calls: CallMetrics[] }> {
   if (!isOwnedStoragePath(storagePath, userId, "sample")) {
     throw new IngestError("That storage path wasn't issued for your sample exam upload.", 400);
@@ -48,6 +50,7 @@ export async function createBlueprint(
       effort: EFFORT.blueprint,
       maxTokens: MAX_TOKENS.blueprint,
       deadlineAt,
+      apiKey,
     },
     (blueprint) => blueprintIssues(blueprint, paperText),
   );

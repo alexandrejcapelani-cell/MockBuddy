@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requestDeadline, warnIfOverServerlessLimit } from "@/lib/ai/config";
 import { BatchBusyError, runNextStage } from "@/lib/generation/stages";
-import { errorResponse, parseBody } from "@/lib/http";
+import { errorResponse, parseBody, requestApiKey } from "@/lib/http";
 
 export const maxDuration = 60;
 
@@ -16,9 +16,10 @@ export async function POST(request: Request) {
   const startedAt = Date.now();
   let context: Record<string, unknown> = {};
   try {
+    const apiKey = requestApiKey(request);
     const { examId, batchIndex } = await parseBody(request, Body);
     context = { examId, batchIndex };
-    const batch = await runNextStage(examId, batchIndex, requestDeadline(startedAt));
+    const batch = await runNextStage(examId, batchIndex, requestDeadline(startedAt), apiKey);
     return NextResponse.json({ batch, requestMs: Date.now() - startedAt });
   } catch (error) {
     if (error instanceof BatchBusyError) return NextResponse.json({ busy: true, batch: error.batch }, { status: 409 });

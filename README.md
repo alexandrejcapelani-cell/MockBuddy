@@ -25,7 +25,11 @@ cp .env.example .env.local   # then put your key after ANTHROPIC_API_KEY=
 npm run dev
 ```
 
-Open http://localhost:3000. `npm run dev` also starts an embedded Postgres database
+Open http://localhost:3000. Instead of (or as well as) `.env.local`, you can paste a key
+in the API key field on the home page: it is kept only in that browser and takes precedence
+for that browser's requests (see "Bring your own key" in docs/DECISIONS.md).
+
+`npm run dev` also starts an embedded Postgres database
 (stored in `.data/pglite`) and applies the migrations; uploads are stored in
 `.data/uploads`. Both are git-ignored. Don't run `npm run build` while `npm run dev` is
 running: they share the `.next` folder.

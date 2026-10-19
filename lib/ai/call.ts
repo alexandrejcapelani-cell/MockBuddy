@@ -2,9 +2,19 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
+import type { ApiKey } from "@/lib/api-key";
 import { ConfigError, serverEnv } from "@/lib/env";
 import { MODEL } from "./config";
+import {
+  classifyApiError,
+  KEY_PROBLEM_KINDS,
+  MISSING_KEY_MESSAGE,
+  type ModelFailureKind,
+  RETRYABLE_KINDS,
+} from "./errors";
 import { parseModelJson } from "./json";
+
+export type { ModelFailureKind } from "./errors";
 
 // Every model call goes through generateJson. It owns retrying (the SDK's own retries
 // are off so retries can be counted), turns stop reasons and API errors into typed
@@ -29,19 +39,6 @@ export interface CallMetrics {
   stopReason: string | null;
 }
 
-export type ModelFailureKind =
-  | "rate_limited"
-  | "overloaded"
-  | "unavailable"
-  | "deadline"
-  | "refusal"
-  | "max_tokens"
-  | "invalid_output"
-  | "config"
-  | "api";
-
-const RETRYABLE: ReadonlySet<ModelFailureKind> = new Set(["rate_limited", "overloaded", "unavailable", "deadline"]);
-
 export class ModelCallError extends Error {
   override name = "ModelCallError";
   constructor(
@@ -55,7 +52,12 @@ export class ModelCallError extends Error {
 
   /** True when running the same request again later may succeed. */
   get retryable(): boolean {
-    return RETRYABLE.has(this.kind);
+    return RETRYABLE_KINDS.has(this.kind);
+  }
+
+  /** True when the API key is missing, invalid or out of credits: fix the key, then retry. */
+  get keyProblem(): boolean {
+    return KEY_PROBLEM_KINDS.has(this.kind);
   }
 }
 
@@ -69,6 +71,8 @@ export interface JsonCall<S extends z.ZodType> {
   maxTokens: number;
   /** Epoch ms by which the call must have finished (set on Vercel only). */
   deadlineAt?: number;
+  /** The key for this call. A browser key is used for this call only: never stored or logged. */
+  apiKey: ApiKey;
 }
 
 export interface JsonResult<T> {
@@ -228,7 +232,7 @@ async function sendWithRetries<S extends z.ZodType>(
     }
 
     try {
-      const stream = client().beta.messages.stream(
+      const stream = clientFor(call.apiKey).beta.messages.stream(
         {
           model: MODEL,
           max_tokens: call.maxTokens,
@@ -244,7 +248,7 @@ async function sendWithRetries<S extends z.ZodType>(
       );
       return await stream.finalMessage();
     } catch (error) {
-      const failure = classify(error, metrics, call.deadlineAt);
+      const failure = classify(error, call, metrics);
       if (!failure.retryable) throw failure;
 
       const delay = backoffMs(metrics.attempts, failure.details.retryAfterMs);
@@ -259,59 +263,24 @@ async function sendWithRetries<S extends z.ZodType>(
   }
 }
 
-function classify(error: unknown, metrics: CallMetrics, deadlineAt: number | undefined): ModelCallError {
-  if (error instanceof ConfigError) return new ModelCallError("config", error.message, metrics);
-  if (error instanceof Anthropic.RateLimitError) {
-    return new ModelCallError(
-      "rate_limited",
-      `Anthropic rate limit hit (HTTP 429) after ${metrics.attempts} attempt(s), ${metrics.retries429} retried.`,
-      metrics,
-      { retryAfterMs: retryAfterMs(error.headers) },
-    );
+function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metrics: CallMetrics): ModelCallError {
+  if (error instanceof ConfigError) return new ModelCallError("missing_key", MISSING_KEY_MESSAGE, metrics);
+  if (
+    error instanceof Anthropic.APIConnectionTimeoutError &&
+    call.deadlineAt !== undefined &&
+    Date.now() >= call.deadlineAt - 1_000
+  ) {
+    return new ModelCallError("deadline", "The model call ran out of time in this request.", metrics, { retryAfterMs: 0 });
   }
-  if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    if (deadlineAt !== undefined && Date.now() >= deadlineAt - 1_000) {
-      return new ModelCallError("deadline", "The model call ran out of time in this request.", metrics, { retryAfterMs: 0 });
-    }
-    return new ModelCallError("unavailable", "The model call timed out.", metrics);
-  }
-  if (error instanceof Anthropic.APIConnectionError) {
-    return new ModelCallError("unavailable", `Could not reach the Anthropic API: ${error.message}`, metrics);
-  }
-  if (error instanceof Anthropic.AuthenticationError) {
-    return new ModelCallError("config", "Anthropic rejected ANTHROPIC_API_KEY (HTTP 401). Check the key in .env.local.", metrics);
-  }
-  if (error instanceof Anthropic.PermissionDeniedError) {
-    return new ModelCallError("config", `Anthropic refused this API key access (HTTP 403): ${error.message}`, metrics);
-  }
-  if (error instanceof Anthropic.APIError) {
-    const overloaded = error.status === 529 || /overloaded/i.test(error.message);
-    if (overloaded) {
-      return new ModelCallError("overloaded", "The Anthropic API is overloaded (HTTP 529).", metrics, {
-        retryAfterMs: retryAfterMs(error.headers),
-      });
-    }
-    if (error.status !== undefined && error.status >= 500) {
-      return new ModelCallError("unavailable", `The Anthropic API failed (HTTP ${error.status}).`, metrics, {
-        retryAfterMs: retryAfterMs(error.headers),
-      });
-    }
-    return new ModelCallError("api", `The Anthropic API rejected the request (HTTP ${error.status ?? "?"}): ${error.message}`, metrics);
-  }
-  throw error;
+  const classified = classifyApiError(error, call.apiKey, metrics);
+  if (!classified) throw error;
+  return new ModelCallError(classified.kind, classified.message, metrics, { retryAfterMs: classified.retryAfterMs });
 }
 
 function backoffMs(attempt: number, retryAfter: number | undefined): number {
   if (retryAfter !== undefined && retryAfter > 0) return Math.min(retryAfter + Math.random() * 250, 60_000);
   const base = Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** (attempt - 1));
   return Math.round(base / 2 + Math.random() * (base / 2));
-}
-
-function retryAfterMs(headers: Headers | undefined): number | undefined {
-  const ms = Number(headers?.get("retry-after-ms"));
-  if (Number.isFinite(ms) && ms > 0) return ms;
-  const seconds = Number(headers?.get("retry-after"));
-  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : undefined;
 }
 
 const formats = new WeakMap<z.ZodType, { type: "json_schema"; schema: Record<string, unknown> }>();
@@ -334,7 +303,12 @@ export function schemaText(schema: z.ZodType): string {
 
 const globalForAnthropic = globalThis as unknown as { mockbuddyAnthropic?: Anthropic };
 
-function client(): Anthropic {
+/**
+ * The server's own client (ANTHROPIC_API_KEY) is cached. A key pasted in the browser gets a
+ * client for this call only, so it is never kept in memory beyond the request.
+ */
+function clientFor(apiKey: ApiKey): Anthropic {
+  if (apiKey.source === "browser") return new Anthropic({ apiKey: apiKey.value, maxRetries: 0 });
   globalForAnthropic.mockbuddyAnthropic ??= new Anthropic({ apiKey: serverEnv("ANTHROPIC_API_KEY"), maxRetries: 0 });
   return globalForAnthropic.mockbuddyAnthropic;
 }

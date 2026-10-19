@@ -46,6 +46,11 @@ export function serverEnv<K extends EnvKey>(key: K): z.output<(typeof schemas)[K
   return parsed.data as z.output<(typeof schemas)[K]>;
 }
 
+/** Whether a variable is set, without exposing its value. */
+export function isConfigured(key: EnvKey): boolean {
+  return nonEmpty(process.env[key]) !== undefined;
+}
+
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === "" ? undefined : value;
 }

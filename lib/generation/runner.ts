@@ -64,8 +64,9 @@ async function runPendingBatches(examId: string, progress: ExamProgress, events:
   progress.batches.forEach((batch) => events.onBatch(batch));
   const pending = progress.batches.filter((batch) => batch.stage !== "done" && batch.stage !== "failed");
   const results = await withConcurrency(pending, MAX_PARALLEL_BATCHES, (batch) => runBatch(examId, batch.batchIndex, events));
-  const failures = results.flatMap((result) => (result.status === "rejected" ? [(result.reason as Error).message] : []));
-  if (failures.length > 0) throw new Error(failures.join(" "));
+  // Batches usually fail for the same reason (a bad key, a rate limit), so say each reason once.
+  const failures = new Set(results.flatMap((result) => (result.status === "rejected" ? [(result.reason as Error).message] : [])));
+  if (failures.size > 0) throw new Error([...failures].join(" "));
 }
 
 /** Calls /api/generate until the batch is done or failed. */
@@ -74,7 +75,7 @@ async function runBatch(examId: string, batchIndex: number, events: RunnerEvents
   let transient = 0;
   let busy = 0;
   while (steps < MAX_STAGE_STEPS) {
-    const result = await postJson<{ batch: BatchView }>("/api/generate", { examId, batchIndex });
+    const result = await postJson<{ batch: BatchView }>("/api/generate", { examId, batchIndex }, { withApiKey: true });
     if (result.ok) {
       steps++;
       events.onBatch(result.data.batch);
@@ -93,7 +94,7 @@ async function runBatch(examId: string, batchIndex: number, events: RunnerEvents
       await sleep(wait);
       continue;
     }
-    throw new Error(`Batch ${batchIndex + 1}: ${result.error}`);
+    throw new Error(result.error);
   }
   throw new Error(`Batch ${batchIndex + 1} didn't finish after ${MAX_STAGE_STEPS} stages.`);
 }

@@ -1,14 +1,20 @@
 // Browser-side helpers for the upload flow: ask for an upload target, send the bytes
 // straight to it, then hand only the storage path to the backend.
 
+import { apiKeyHeaders } from "./api-key-client.ts";
 import type { UploadKind } from "./files";
 
 export type JsonResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string; data: Record<string, unknown> };
 
-export async function postJson<T>(url: string, body: unknown): Promise<JsonResult<T>> {
+/**
+ * POSTs JSON. `withApiKey` adds the key pasted in this browser, if any, as a header: use it
+ * only for routes that call the model.
+ */
+export async function postJson<T>(url: string, body: unknown, options: { withApiKey?: boolean } = {}): Promise<JsonResult<T>> {
+  const headers = { "Content-Type": "application/json", ...(options.withApiKey ? apiKeyHeaders() : {}) };
   let response: Response;
   try {
-    response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   } catch (error) {
     return { ok: false, status: 0, error: `Couldn't reach the app server: ${(error as Error).message}`, data: {} };
   }

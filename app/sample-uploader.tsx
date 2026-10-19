@@ -25,7 +25,11 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
       return;
     }
     setPhase("reading");
-    const result = await postJson("/api/blueprint", { storagePath: uploaded.data.storagePath, filename: file.name });
+    const result = await postJson(
+      "/api/blueprint",
+      { storagePath: uploaded.data.storagePath, filename: file.name },
+      { withApiKey: true },
+    );
     if (!result.ok) {
       setPhase("failed");
       setMessage(result.error);

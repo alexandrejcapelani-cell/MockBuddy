@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requestDeadline, warnIfOverServerlessLimit } from "@/lib/ai/config";
 import { serverEnv } from "@/lib/env";
-import { errorResponse, parseBody } from "@/lib/http";
+import { errorResponse, parseBody, requestApiKey } from "@/lib/http";
 import { createMaterial, getOwnedMaterial, processMaterial } from "@/lib/ingest/ingest";
 
 export const maxDuration = 60;
@@ -19,6 +19,7 @@ export async function POST(request: Request) {
   const startedAt = Date.now();
   let materialId: string | undefined;
   try {
+    const apiKey = requestApiKey(request);
     const body = await parseBody(request, Body);
     const userId = serverEnv("DEMO_USER_ID");
     const material =
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
         : await createMaterial(userId, body.storagePath, body.filename);
     materialId = material.id;
 
-    const result = await processMaterial(material, requestDeadline(startedAt));
+    const result = await processMaterial(material, requestDeadline(startedAt), apiKey);
     return NextResponse.json({ material: result.material, calls: result.calls });
   } catch (error) {
     return errorResponse(error, materialId ? { materialId } : {});

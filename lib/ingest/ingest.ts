@@ -1,6 +1,7 @@
 import "server-only";
 import { and, asc, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { type CallMetrics, ModelCallError } from "@/lib/ai/call";
+import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { chunks, materials } from "@/lib/db/schema";
 import { classifyUpload, isOwnedStoragePath, MAX_CHUNKS } from "@/lib/files";
@@ -52,13 +53,14 @@ export async function getOwnedMaterial(userId: string, materialId: string): Prom
 export async function processMaterial(
   material: Material,
   deadlineAt: number | undefined,
+  apiKey: ApiKey,
 ): Promise<{ material: Material; calls: CallMetrics[] }> {
   if (material.status === "chunked") return { material, calls: [] };
   await setStatus(material.id, { status: "extracting", error: null });
   try {
     const [{ existing }] = await db().select({ existing: count() }).from(chunks).where(eq(chunks.materialId, material.id));
     if (existing === 0) await extractAndChunk(material);
-    const calls = await labelUnlabelledChunks(material, deadlineAt);
+    const calls = await labelUnlabelledChunks(material, deadlineAt, apiKey);
     return { material: await setStatus(material.id, { status: "chunked", error: null }), calls };
   } catch (error) {
     await setStatus(material.id, { status: "failed", error: failureReason(error) });
@@ -114,7 +116,7 @@ async function insertChunksWithinCap(material: Material, drafts: ChunkDraft[], p
   });
 }
 
-async function labelUnlabelledChunks(material: Material, deadlineAt: number | undefined): Promise<CallMetrics[]> {
+async function labelUnlabelledChunks(material: Material, deadlineAt: number | undefined, apiKey: ApiKey): Promise<CallMetrics[]> {
   const unlabelled = await db()
     .select({ id: chunks.id, ordinal: chunks.ordinal, sectionLabel: chunks.sectionLabel, content: chunks.content })
     .from(chunks)
@@ -131,7 +133,7 @@ async function labelUnlabelledChunks(material: Material, deadlineAt: number | un
   const { labels, calls } = await labelTopics(
     unlabelled.map((chunk) => ({ index: chunk.ordinal, sectionLabel: chunk.sectionLabel, content: chunk.content })),
     existing.flatMap((row) => (row.label ? [row.label] : [])),
-    { materialId: material.id, deadlineAt },
+    { materialId: material.id, deadlineAt, apiKey },
   );
 
   await db().transaction(async (tx) => {

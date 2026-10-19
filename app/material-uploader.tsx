@@ -48,10 +48,11 @@ export function MaterialUploader() {
         continue;
       }
       update(key, { phase: "processing" });
-      const ingested = await postJson<IngestResponse>("/api/materials/ingest", {
-        storagePath: uploaded.data.storagePath,
-        filename: file.name,
-      });
+      const ingested = await postJson<IngestResponse>(
+        "/api/materials/ingest",
+        { storagePath: uploaded.data.storagePath, filename: file.name },
+        { withApiKey: true },
+      );
       update(key, ingested.ok ? { phase: "done" } : { phase: "failed", message: ingested.error });
       router.refresh();
     }

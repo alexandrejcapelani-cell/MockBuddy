@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
 import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
-import { serverEnv } from "@/lib/env";
+import { isConfigured, serverEnv } from "@/lib/env";
 import { listMaterials, materialTotals } from "@/lib/materials";
+import { ApiKeyField } from "./api-key-field";
 import { GenerateForm } from "./generate-form";
 import { MaterialActions } from "./material-actions";
 import { MaterialUploader } from "./material-uploader";
@@ -32,6 +33,9 @@ export default async function TablePage() {
         <h1 className="text-2xl font-semibold">MockBuddy</h1>
         <p className="text-sm text-muted-foreground">Practice exams from your own course material.</p>
       </header>
+
+      {/* Only whether a server key exists reaches the page, never the key itself. */}
+      <ApiKeyField serverKeyConfigured={isConfigured("ANTHROPIC_API_KEY")} />
 
       <section aria-labelledby="material-heading" className="space-y-4">
         <h2 id="material-heading" className="text-lg font-semibold">

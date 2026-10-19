@@ -1,7 +1,8 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { ModelCallError } from "@/lib/ai/call";
+import { ModelCallError, type ModelFailureKind } from "@/lib/ai/call";
+import { API_KEY_HEADER, type ApiKey, checkApiKeyFormat } from "@/lib/api-key";
 import { ConfigError } from "@/lib/env";
 import { DocumentError } from "@/lib/ingest/extract";
 import { IngestError } from "@/lib/ingest/ingest";
@@ -16,10 +17,31 @@ export class RequestError extends Error {
   constructor(
     message: string,
     readonly status: 400 | 404 | 409 | 413 | 415 | 422 = 400,
+    readonly kind?: ModelFailureKind,
   ) {
     super(message);
   }
 }
+
+/**
+ * The key for this request's model calls: the one pasted in the browser (sent in a header,
+ * never in the URL), or the server's ANTHROPIC_API_KEY when there is none. The value is
+ * only passed on to the Anthropic client; never store or log it.
+ */
+export function requestApiKey(request: Request): ApiKey {
+  const raw = request.headers.get(API_KEY_HEADER);
+  if (raw === null || raw.trim() === "") return { source: "server" };
+  const check = checkApiKeyFormat(raw);
+  if (!check.ok) throw new RequestError(`The API key saved in this browser is malformed: ${check.message}`, 400, "invalid_key");
+  return { source: "browser", value: check.key };
+}
+
+const STATUS_BY_KIND: Partial<Record<ModelFailureKind, number>> = {
+  missing_key: 401,
+  invalid_key: 401,
+  no_credits: 402,
+  rate_limited: 429,
+};
 
 export async function parseBody<S extends z.ZodType>(request: Request, schema: S): Promise<z.output<S>> {
   let body: unknown;
@@ -44,14 +66,15 @@ export async function examIdParam(params: Promise<{ examId: string }>): Promise<
 }
 
 export function errorResponse(error: unknown, extra: Record<string, unknown> = {}): NextResponse {
-  if (error instanceof RequestError || error instanceof IngestError) {
-    return NextResponse.json({ error: error.message, ...extra }, { status: error.status });
+  if (error instanceof RequestError) {
+    return NextResponse.json({ error: error.message, kind: error.kind ?? null, ...extra }, { status: error.status });
   }
+  if (error instanceof IngestError) return NextResponse.json({ error: error.message, ...extra }, { status: error.status });
   if (error instanceof DocumentError) return NextResponse.json({ error: error.message, ...extra }, { status: 422 });
   if (error instanceof StorageNotFoundError) return NextResponse.json({ error: error.message, ...extra }, { status: 404 });
   if (error instanceof ConfigError) return NextResponse.json({ error: error.message, ...extra }, { status: 500 });
   if (error instanceof ModelCallError) {
-    const status = error.retryable ? 503 : error.kind === "config" ? 500 : 502;
+    const status = STATUS_BY_KIND[error.kind] ?? (error.retryable ? 503 : 502);
     return NextResponse.json(
       {
         error: error.message,

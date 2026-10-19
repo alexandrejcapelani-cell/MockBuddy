@@ -4,6 +4,7 @@ import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { type CallMetrics, generateJson, ModelCallError, schemaText, withRetryNote } from "@/lib/ai/call";
 import { EFFORT, MAX_TOKENS } from "@/lib/ai/config";
+import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { exams, generationBatches, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
@@ -53,12 +54,19 @@ interface StageRun {
   sources: SlotWithSources[];
   existing: string[];
   deadlineAt: number | undefined;
+  /** For this request's model calls only. Never saved with the batch. */
+  apiKey: ApiKey;
   metrics: StageMetrics[];
 }
 
 type StageResult = Partial<Pick<BatchRow, "stage" | "drafts" | "verdicts" | "outcomes" | "attempts" | "error">>;
 
-export async function runNextStage(examId: string, batchIndex: number, deadlineAt: number | undefined): Promise<BatchView> {
+export async function runNextStage(
+  examId: string,
+  batchIndex: number,
+  deadlineAt: number | undefined,
+  apiKey: ApiKey,
+): Promise<BatchView> {
   const exam = await loadExam(examId);
   const [claimed] = await db()
     .update(generationBatches)
@@ -90,6 +98,7 @@ export async function runNextStage(examId: string, batchIndex: number, deadlineA
     sources: [],
     existing: [],
     deadlineAt,
+    apiKey,
     metrics: [],
   };
   try {
@@ -263,8 +272,8 @@ async function runRevise(run: StageRun): Promise<StageResult> {
 type ModelResponse<T> = T | { error: string } | { failed: StageResult };
 
 /**
- * Runs one model call for the stage and records its metrics. Retryable failures are
- * rethrown (the stage stays put and the client re-runs it); configuration and API errors
+ * Runs one model call for the stage and records its metrics. Retryable failures and key
+ * problems are rethrown (the stage stays put and the client re-runs it); other API errors
  * fail the batch; bad output (invalid JSON, refusal, cut off) comes back as { error } for
  * the stage's own one-retry logic.
  */
@@ -289,14 +298,17 @@ async function callModel<S extends z.ZodType>(
       messages,
       ...settings,
       deadlineAt: run.deadlineAt,
+      apiKey: run.apiKey,
     });
     run.metrics.push(stageMetrics(stage, result.metrics, "ok"));
     return result.data;
   } catch (error) {
     if (!(error instanceof ModelCallError)) throw error;
     run.metrics.push(stageMetrics(stage, error.metrics, error.kind));
-    if (error.retryable) throw error;
-    if (error.kind === "config" || error.kind === "api") return { failed: failBatch(run, error.message) };
+    // Transient failures and key problems leave the stage where it is: once the wait is over
+    // or the key is fixed, the client runs the same stage again.
+    if (error.retryable || error.keyProblem) throw error;
+    if (error.kind === "api") return { failed: failBatch(run, error.message) };
     return { error: error.message };
   }
 }
