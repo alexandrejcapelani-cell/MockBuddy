@@ -1,0 +1,1 @@
+ALTER TABLE "blueprints" ADD COLUMN "storage_path" text NOT NULL;

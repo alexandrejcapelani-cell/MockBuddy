@@ -12,6 +12,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { BlueprintSpec, OptionExplanation, RubricPoint, SampleQuestion } from "../schemas";
 
 // Data model from MOCKBUDDY_SPEC.md section 6.
 //
@@ -20,8 +21,7 @@ import {
 // app connects as the `postgres` role through DATABASE_URL, which owns the
 // tables and is not subject to RLS.
 //
-// jsonb column types are placeholders until the Zod schemas in lib/schemas.ts
-// exist (phases 2 and 3); they will be replaced by types inferred from those.
+// jsonb column types come from the Zod schemas in lib/schemas.ts.
 
 export const materialStatus = pgEnum("material_status", ["uploaded", "extracting", "chunked", "failed"]);
 export const examDifficulty = pgEnum("exam_difficulty", ["easier", "same", "harder"]);
@@ -71,8 +71,11 @@ export const blueprints = pgTable(
     id: id(),
     userId: text("user_id").notNull(),
     sourceFilename: text("source_filename").notNull(),
-    spec: jsonb("spec").$type<Record<string, unknown>>().notNull(),
-    sampleQuestions: jsonb("sample_questions").$type<{ type: string; verbatim_text: string }[]>().notNull(),
+    /** Where the uploaded sample exam is stored. It is never chunked into the material pool. */
+    storagePath: text("storage_path").notNull(),
+    spec: jsonb("spec").$type<BlueprintSpec>().notNull(),
+    /** Questions copied verbatim from the sample exam: few-shot examples and permanent exclusions. */
+    sampleQuestions: jsonb("sample_questions").$type<SampleQuestion[]>().notNull(),
     createdAt: createdAt(),
   },
   (t) => [index("blueprints_user_created_idx").on(t.userId, t.createdAt)],
@@ -111,11 +114,10 @@ export const questions = pgTable(
     marks: doublePrecision("marks").notNull(),
     options: jsonb("options").$type<string[]>(),
     correctOption: integer("correct_option"),
-    optionExplanations:
-      jsonb("option_explanations").$type<{ index: number; is_correct: boolean; explanation: string }[]>(),
+    optionExplanations: jsonb("option_explanations").$type<OptionExplanation[]>(),
     correctExplanation: text("correct_explanation").notNull(),
     expectedAnswer: text("expected_answer"),
-    rubric: jsonb("rubric").$type<{ point: string; marks: number }[]>(),
+    rubric: jsonb("rubric").$type<RubricPoint[]>(),
     numericAnswer: doublePrecision("numeric_answer"),
     tolerance: doublePrecision("tolerance"),
     unit: text("unit"),

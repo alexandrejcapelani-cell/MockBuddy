@@ -1,15 +1,22 @@
 import Link from "next/link";
+import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
+import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
 import { serverEnv } from "@/lib/env";
 import { listMaterials, materialTotals } from "@/lib/materials";
 import { MaterialActions } from "./material-actions";
 import { MaterialUploader } from "./material-uploader";
+import { SampleUploader } from "./sample-uploader";
 
 // Plain UI until phase 6 brings the casino table.
 export const dynamic = "force-dynamic";
 
 export default async function TablePage() {
   const userId = serverEnv("DEMO_USER_ID");
-  const [materials, totals] = await Promise.all([listMaterials(userId), materialTotals(userId)]);
+  const [materials, totals, blueprint] = await Promise.all([
+    listMaterials(userId),
+    materialTotals(userId),
+    activeBlueprint(userId),
+  ]);
 
   return (
     <main className="mx-auto max-w-3xl space-y-10 p-6">
@@ -53,6 +60,34 @@ export default async function TablePage() {
             Inspect chunks
           </Link>
         </p>
+      </section>
+
+      <section aria-labelledby="sample-heading" className="space-y-4">
+        <h2 id="sample-heading" className="text-lg font-semibold">
+          Your sample exam
+        </h2>
+        <SampleUploader hasBlueprint={blueprint !== null} />
+        {blueprint ? (
+          <div className="space-y-1 rounded-lg border px-3 py-2 text-sm">
+            <p className="font-medium break-all">{blueprint.sourceFilename}</p>
+            <ul className="text-muted-foreground">
+              {blueprint.spec.sections.map((section, i) => (
+                <li key={i}>
+                  {section.name}: {QUESTION_TYPE_NAMES[section.question_type]}, {Math.round(section.proportion * 100)}% of
+                  questions, {section.marks_each} marks each
+                </li>
+              ))}
+            </ul>
+            <p>
+              {blueprint.sampleQuestions.length} sample questions copied verbatim ·{" "}
+              <Link href="/blueprint" className="underline">
+                Review the blueprint
+              </Link>
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No sample exam yet.</p>
+        )}
       </section>
     </main>
   );
