@@ -202,6 +202,22 @@ Each lands in its own reviewed migration when the phase that needs it starts.
   they never depend on colour.
 - The win sound, chip cascade and card flip belong to the casino theme (phase 6).
 
+## Results and regeneration (phase 5)
+
+- The score is marks earned over all marks in the exam; unanswered questions count as zero.
+- Per-topic accuracy is marks earned over marks available on the questions answered in
+  that topic. HOT and COLD flag the highest and lowest accuracy, only when at least two
+  topics have different accuracies; ties share the flag.
+- On the results page an unanswered question keeps its answer hidden, with a link back to
+  answer it.
+- REGENERATE (`POST /api/regenerate`) creates a new exam from the original exam's
+  blueprint (the same sample exam, even if a newer one has been uploaded since), the
+  material as it is now, the same count and difficulty, and a new seed. It links to the
+  previous exam through `parent_exam_id`, so generation excludes every question stem in
+  the chain (up to 5 exams back) and ranks the chain's used chunks last; the new exam's
+  own `used_chunk_ids` starts empty. Generation then runs on the generation page like any
+  other mock.
+
 ## Material ingestion
 
 - Headings are preferred break points; consecutive pages merge up to about 2,500 tokens

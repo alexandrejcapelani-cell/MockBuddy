@@ -24,8 +24,10 @@ export async function createExam(input: {
   questionCount: (typeof QUESTION_COUNTS)[number];
   difficulty: ExamDifficulty;
   parentExamId?: string;
+  /** Defaults to the user's active blueprint (the latest sample exam). */
+  blueprintId?: string;
 }): Promise<{ examId: string; batches: number }> {
-  const blueprint = await activeBlueprint(input.userId);
+  const blueprint = input.blueprintId ? await blueprintById(input.blueprintId) : await activeBlueprint(input.userId);
   if (!blueprint) throw new RequestError("Upload a sample exam first: generation needs its blueprint.", 409);
   const pool = await plannableChunks(input.userId);
   if (pool.length === 0) throw new RequestError("Add some material first: there are no labelled chunks to write questions from.", 409);
@@ -61,6 +63,30 @@ export async function createExam(input: {
     return exam.id;
   });
   return { examId, batches: Math.ceil(plan.slots.length / BATCH_SIZE) };
+}
+
+/**
+ * REGENERATE: a new exam from the same material and sample exam, with the same count and
+ * difficulty but a new seed. Its parent link makes generation exclude every question stem
+ * in the chain and rank the chunks the chain already used last.
+ */
+export async function regenerateExam(examId: string): Promise<{ examId: string; batches: number }> {
+  const exam = await loadExam(examId);
+  if (exam.status === "generating") throw new RequestError("Wait for this mock to finish generating first.", 409);
+  const blueprint = await blueprintById(exam.blueprintId);
+  if (!blueprint) throw new RequestError("This mock's sample exam no longer exists.", 409);
+  return createExam({
+    userId: blueprint.userId,
+    questionCount: exam.questionCount as (typeof QUESTION_COUNTS)[number],
+    difficulty: exam.difficulty,
+    parentExamId: exam.id,
+    blueprintId: blueprint.id,
+  });
+}
+
+async function blueprintById(id: string) {
+  const [blueprint] = await db().select().from(blueprints).where(eq(blueprints.id, id));
+  return blueprint ?? null;
 }
 
 /** Labelled chunks from processed material, minus non-teaching chunks. */

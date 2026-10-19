@@ -11,10 +11,15 @@ Zod · KaTeX · unpdf.
 
 ## Status
 
-Phases 0–3 are built: uploads, extraction, chunking and topic labels; blueprint extraction
-with verbatim sample questions; and generation (draft → critique → revise per batch of 5,
-batches in parallel, top-ups for dropped questions). The UI is deliberately plain until
-phase 6. Taking and marking the exam is phase 4.
+Phases 0–5 are built: uploads, extraction, chunking and topic labels; blueprint extraction
+with verbatim sample questions; generation (draft → critique → revise per batch of 5,
+batches in parallel, top-ups for dropped questions); taking the exam with immediate
+marking and explanations; and results with a per-topic breakdown and REGENERATE. The UI is
+deliberately plain until phase 6 brings the casino theme.
+
+To try the exam and results pages without calling the model, run `npm run db:seed-demo`
+while `npm run dev` is running: it adds a ready 10-question demo mock (kept apart from your
+own material) and prints its link.
 
 ## Run it locally
 
@@ -40,7 +45,11 @@ running: they share the `.next` folder.
 2. **Your sample exam**: add one past exam or mock. `/blueprint` shows what was learned
    from it, including the questions copied verbatim.
 3. **Generate a mock**: choose 5–20 questions and a difficulty. The generation page shows
-   each batch's progress; when it finishes, review every question, answer and explanation.
+   each batch's progress.
+4. **Take it**: one question at a time, marked as soon as you answer, with an explanation
+   for every option. Short answers are marked by the model against the rubric.
+5. **Results**: score, accuracy by topic (HOT and COLD), every question reviewable, and
+   REGENERATE for a fresh mock from the same material and sample exam.
 
 ## Scripts
 
