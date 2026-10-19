@@ -1,7 +1,6 @@
 import "server-only";
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { CallMetrics } from "@/lib/ai/call";
-import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { answers, chunks, exams, questions } from "@/lib/db/schema";
 import { gradeAnswer } from "@/lib/grading/grade";
@@ -53,7 +52,6 @@ export async function submitAnswer(input: {
   examId: string;
   questionId: string;
   response: string;
-  apiKey: ApiKey;
   deadlineAt: number | undefined;
 }): Promise<SubmittedAnswer> {
   const [exam] = await db().select().from(exams).where(eq(exams.id, input.examId));
@@ -70,7 +68,7 @@ export async function submitAnswer(input: {
   const [existing] = await db().select().from(answers).where(eq(answers.questionId, question.id));
   if (!existing) {
     const response = validResponse(question, input.response);
-    const grade = await gradeAnswer(question, response, input.apiKey, input.deadlineAt);
+    const grade = await gradeAnswer(question, response, input.deadlineAt);
     calls = grade.calls;
     await db()
       .insert(answers)

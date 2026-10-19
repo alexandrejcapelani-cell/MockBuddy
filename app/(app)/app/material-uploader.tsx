@@ -28,7 +28,7 @@ interface IngestResponse {
 }
 
 /** Uploads material files one at a time and processes each as soon as it lands. */
-export function MaterialUploader() {
+export function MaterialUploader({ subjectId }: { subjectId: string }) {
   const router = useRouter();
   const [progress, setProgress] = useState<FileProgress[]>([]);
   const [busy, setBusy] = useState(false);
@@ -44,7 +44,7 @@ export function MaterialUploader() {
 
     for (const { file, key } of queue) {
       update(key, { phase: "uploading" });
-      const uploaded = await uploadFile(file, "material");
+      const uploaded = await uploadFile(file, "material", subjectId);
       if (!uploaded.ok) {
         update(key, { phase: "failed", message: uploaded.error });
         continue;
@@ -52,8 +52,7 @@ export function MaterialUploader() {
       update(key, { phase: "processing" });
       const ingested = await postJson<IngestResponse>(
         "/api/materials/ingest",
-        { storagePath: uploaded.data.storagePath, filename: file.name },
-        { withApiKey: true },
+        { subjectId, storagePath: uploaded.data.storagePath, filename: file.name },
       );
       update(
         key,

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { ownsExam } from "@/lib/ownership";
 import { loadExamForTaking } from "@/lib/exam/taking";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
 import { RequestError } from "@/lib/http";
@@ -10,7 +12,8 @@ export const dynamic = "force-dynamic";
 
 export default async function ExamPage({ params }: { params: Promise<{ examId: string }> }) {
   const { examId } = await params;
-  if (!z.uuid().safeParse(examId).success) notFound();
+  const user = await requireUser();
+  if (!z.uuid().safeParse(examId).success || !(await ownsExam(user.id, examId))) notFound();
   const { exam, questions } = await loadExamForTaking(examId).catch((error: unknown) => {
     if (error instanceof RequestError && error.status === 404) notFound();
     throw error;

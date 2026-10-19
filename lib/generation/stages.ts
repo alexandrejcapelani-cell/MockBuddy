@@ -2,7 +2,6 @@ import "server-only";
 import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { type CallMetrics, generateJson, ModelCallError, type PromptMessage, schemaText, withRetryNote } from "@/lib/ai/call";
-import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { exams, generationBatches, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
@@ -52,8 +51,6 @@ interface StageRun {
   sources: SlotWithSources[];
   existing: string[];
   deadlineAt: number | undefined;
-  /** For this request's model calls only. Never saved with the batch. */
-  apiKey: ApiKey;
   metrics: StageMetrics[];
 }
 
@@ -63,7 +60,6 @@ export async function runNextStage(
   examId: string,
   batchIndex: number,
   deadlineAt: number | undefined,
-  apiKey: ApiKey,
 ): Promise<BatchView> {
   const exam = await loadExam(examId);
   const [claimed] = await db()
@@ -96,7 +92,6 @@ export async function runNextStage(
     sources: [],
     existing: [],
     deadlineAt,
-    apiKey,
     metrics: [],
   };
   try {
@@ -291,7 +286,6 @@ async function callModel<S extends z.ZodType>(
       messages,
       task,
       deadlineAt: run.deadlineAt,
-      apiKey: run.apiKey,
     });
     run.metrics.push(stageMetrics(stage, result.metrics, "ok"));
     return result.data;

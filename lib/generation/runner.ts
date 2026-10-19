@@ -75,7 +75,7 @@ async function runBatch(examId: string, batchIndex: number, events: RunnerEvents
   let transient = 0;
   let busy = 0;
   while (steps < MAX_STAGE_STEPS) {
-    const result = await postJson<{ batch: BatchView }>("/api/generate", { examId, batchIndex }, { withApiKey: true });
+    const result = await postJson<{ batch: BatchView }>("/api/generate", { examId, batchIndex });
     if (result.ok) {
       steps++;
       events.onBatch(result.data.batch);

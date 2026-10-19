@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { WaitlistForm } from "./waitlist-form";
+import { LogoutButton } from "@/components/logout-button";
+import { currentUser } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "MockBuddy: practice exams from your own slides",
@@ -25,15 +26,20 @@ const STEPS = [
 
 const REELS = ["Omitted variable bias", "Instrumental variables", "Heteroskedasticity"];
 
-/** The landing page. The app itself lives at /app. */
-export default function LandingPage() {
+/**
+ * The landing page: public, with one button, Sign up. The app itself lives at /app, behind a
+ * login. Signed-in visitors get a link back to it and the logout button instead.
+ */
+export default async function LandingPage() {
+  const user = await currentUser();
   return (
     <>
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+      <header className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4">
         <span className="font-display text-2xl font-bold text-gold-text">MockBuddy</span>
-        <Link href="/app" className="btn-quiet no-underline">
-          Open the app
-        </Link>
+        <nav aria-label="Account" className="flex items-center gap-4">
+          {user ? <Link href="/app">Open the app</Link> : <Link href="/login">Log in</Link>}
+          <LogoutButton />
+        </nav>
       </header>
 
       <main>
@@ -43,13 +49,13 @@ export default function LandingPage() {
               Practice exams dealt from <span className="text-gold-text">your own slides</span>.
             </h1>
             <p className="max-w-prose text-lg text-dim">
-              Give MockBuddy your course material and one past exam. It learns how your exam is written and deals you a brand-new
+              For university students revising for an exam. Give MockBuddy your course material and one past exam. It learns how your exam is written and deals you a brand-new
               mock in the same style, drawing on everything you&rsquo;ve studied, not just the topics the old paper happened to
               cover.
             </p>
             <div className="flex flex-wrap items-center gap-4">
-              <Link href="/app" className="btn-gold px-8 py-3 text-lg no-underline">
-                Start
+              <Link href={user ? "/app" : "/signup"} className="btn-gold px-8 py-3 text-lg no-underline">
+                {user ? "Open the app" : "Sign up free"}
               </Link>
               <a href="#how-it-works">How it works</a>
             </div>
@@ -89,28 +95,13 @@ export default function LandingPage() {
               </li>
             ))}
           </ol>
-          <p className="text-center">
-            <Link href="/app" className="btn-gold px-8 py-3 text-lg no-underline">
-              Start
-            </Link>
-          </p>
-        </section>
-
-        <section aria-labelledby="waitlist-heading" className="mx-auto max-w-2xl px-4 py-12">
-          <div className="panel space-y-4 p-6 sm:p-8">
-            <h2 id="waitlist-heading" className="font-display text-3xl font-bold">
-              Want it for your course?
-            </h2>
-            <p className="text-dim">MockBuddy is still being built. Leave your email and we&rsquo;ll tell you when it opens.</p>
-            <WaitlistForm />
-          </div>
         </section>
       </main>
 
       <footer className="mx-auto max-w-5xl px-4 pt-6 pb-10 text-center text-sm text-dim">
         <p>
-          The casino look is decoration only: there is no money, betting or gambling anywhere in MockBuddy. It runs on your own
-          Gemini API key, kept in your browser.
+          Every account gets 2 free mocks. The casino look is decoration only: there is no money, betting or gambling anywhere
+          in MockBuddy.
         </p>
       </footer>
     </>

@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { ownsExam } from "@/lib/ownership";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
 import { examProgress } from "@/lib/generation/context";
 import { RequestError } from "@/lib/http";
@@ -9,7 +11,8 @@ export const dynamic = "force-dynamic";
 
 export default async function SpinPage({ params }: { params: Promise<{ examId: string }> }) {
   const { examId } = await params;
-  if (!z.uuid().safeParse(examId).success) notFound();
+  const user = await requireUser();
+  if (!z.uuid().safeParse(examId).success || !(await ownsExam(user.id, examId))) notFound();
   const progress = await examProgress(examId).catch((error: unknown) => {
     if (error instanceof RequestError && error.status === 404) notFound();
     throw error;

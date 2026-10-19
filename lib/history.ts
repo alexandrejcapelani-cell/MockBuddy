@@ -1,7 +1,7 @@
 import "server-only";
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { answers, blueprints, exams, questions } from "@/lib/db/schema";
+import { answers, exams, questions, subjects } from "@/lib/db/schema";
 import { computeResults } from "@/lib/exam/results";
 import { toQuestionView } from "@/lib/exam/view";
 
@@ -9,6 +9,7 @@ import { toQuestionView } from "@/lib/exam/view";
 
 export interface HistoryRow {
   examId: string;
+  subject: string;
   createdAt: Date;
   questionCount: number;
   generated: number;
@@ -31,10 +32,11 @@ export async function listHistory(userId: string): Promise<HistoryRow[]> {
       difficulty: exams.difficulty,
       status: exams.status,
       parentExamId: exams.parentExamId,
+      subject: subjects.name,
     })
     .from(exams)
-    .innerJoin(blueprints, eq(exams.blueprintId, blueprints.id))
-    .where(eq(blueprints.userId, userId))
+    .innerJoin(subjects, eq(exams.subjectId, subjects.id))
+    .where(eq(exams.userId, userId))
     .orderBy(desc(exams.createdAt));
   if (rows.length === 0) return [];
 
@@ -52,6 +54,7 @@ export async function listHistory(userId: string): Promise<HistoryRow[]> {
     const results = computeResults(views);
     return {
       examId: row.id,
+      subject: row.subject,
       createdAt: row.createdAt,
       questionCount: row.questionCount,
       generated: views.length,

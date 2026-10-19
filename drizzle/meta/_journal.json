@@ -5,43 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1792346327871,
-      "tag": "0000_initial_schema",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1792402121991,
-      "tag": "0001_phase1_ingestion",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1792402447139,
-      "tag": "0002_phase2_blueprint",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1792402720601,
-      "tag": "0003_phase3_generation",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1792407120762,
-      "tag": "0004_phase4_rubric_marks",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1792411325411,
-      "tag": "0005_phase6_waitlist",
+      "when": 1792429185107,
+      "tag": "0000_supabase_schema",
       "breakpoints": true
     }
   ]

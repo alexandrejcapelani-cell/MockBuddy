@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requestDeadline, warnIfOverServerlessLimit } from "@/lib/ai/config";
-import { serverEnv } from "@/lib/env";
-import { errorResponse, parseBody, requestApiKey } from "@/lib/http";
+import { requireApiUser } from "@/lib/auth";
+import { errorResponse, parseBody } from "@/lib/http";
 import { createMaterial, getOwnedMaterial, processMaterial } from "@/lib/ingest/ingest";
+import { requireOwnedSubject } from "@/lib/ownership";
 
-export const maxDuration = 60;
+// A literal, because Next.js reads it statically; keep it equal to REQUEST_LIMIT_SECONDS.
+export const maxDuration = 300;
 
 const Body = z.union([
   // A file that was just uploaded.
-  z.object({ storagePath: z.string().min(1), filename: z.string().trim().min(1).max(255) }),
+  z.object({ subjectId: z.uuid(), storagePath: z.string().min(1), filename: z.string().trim().min(1).max(255) }),
   // Retry a material that failed.
   z.object({ materialId: z.uuid() }),
 ]);
@@ -19,16 +21,18 @@ export async function POST(request: Request) {
   const startedAt = Date.now();
   let materialId: string | undefined;
   try {
-    const apiKey = requestApiKey(request);
+    const user = await requireApiUser();
     const body = await parseBody(request, Body);
-    const userId = serverEnv("DEMO_USER_ID");
-    const material =
-      "materialId" in body
-        ? await getOwnedMaterial(userId, body.materialId)
-        : await createMaterial(userId, body.storagePath, body.filename);
+    let material;
+    if ("materialId" in body) {
+      material = await getOwnedMaterial(user.id, body.materialId);
+    } else {
+      await requireOwnedSubject(user.id, body.subjectId);
+      material = await createMaterial(user.id, body.subjectId, body.storagePath, body.filename);
+    }
     materialId = material.id;
 
-    const result = await processMaterial(material, requestDeadline(startedAt), apiKey);
+    const result = await processMaterial(material, requestDeadline(startedAt));
     return NextResponse.json({ material: result.material, calls: result.calls });
   } catch (error) {
     return errorResponse(error, materialId ? { materialId } : {});

@@ -1,9 +1,8 @@
 import "server-only";
-import { localFileStorage } from "./local";
+import { supabaseFileStorage } from "./supabase";
 import type { FileStorage } from "./types";
 
-// The one place that chooses where uploads live. To move to Supabase Storage, add
-// lib/storage/supabase.ts implementing FileStorage and point this line at it.
-export const storage: FileStorage = localFileStorage;
+// The one place that chooses where uploads live.
+export const storage: FileStorage = supabaseFileStorage;
 
 export { StorageNotFoundError, type FileStorage, type UploadTarget } from "./types";

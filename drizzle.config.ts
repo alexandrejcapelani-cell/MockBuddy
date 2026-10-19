@@ -1,16 +1,18 @@
 import { loadEnvConfig } from "@next/env";
 import { defineConfig } from "drizzle-kit";
-import { LOCAL_DATABASE_URL } from "./lib/local-db";
 
-// Load .env.local the same way Next.js does. Without DATABASE_URL, drizzle-kit talks to
-// the embedded database that `npm run dev` serves (which also applies migrations itself).
+// Load .env.local the same way Next.js does. `db:generate` needs no database; the other
+// drizzle-kit commands use DATABASE_URL (your Supabase connection string).
 loadEnvConfig(process.cwd());
 
 export default defineConfig({
   schema: "./lib/db/schema.ts",
   out: "./drizzle",
   dialect: "postgresql",
-  dbCredentials: { url: process.env.DATABASE_URL || LOCAL_DATABASE_URL },
+  // Supabase's own roles (anon, authenticated…) and schemas (auth, storage) already exist.
+  entities: { roles: { provider: "supabase" } },
+  schemaFilter: ["public"],
+  dbCredentials: { url: process.env.DATABASE_URL ?? "" },
   strict: true,
   verbose: true,
 });

@@ -2,6 +2,8 @@ import { asc, eq, inArray } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { ownsExam } from "@/lib/ownership";
 import { MathText } from "@/components/math-text";
 import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
 import { db } from "@/lib/db";
@@ -18,7 +20,8 @@ const LETTERS = "ABCDEFGH";
 
 export default async function ExamReviewPage({ params }: { params: Promise<{ examId: string }> }) {
   const { examId } = await params;
-  if (!z.uuid().safeParse(examId).success) notFound();
+  const user = await requireUser();
+  if (!z.uuid().safeParse(examId).success || !(await ownsExam(user.id, examId))) notFound();
   const [exam] = await db().select().from(exams).where(eq(exams.id, examId));
   if (!exam) notFound();
 

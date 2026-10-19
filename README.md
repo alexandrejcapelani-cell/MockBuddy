@@ -1,86 +1,73 @@
 # MockBuddy
 
-Turns your own course material into realistic practice exams, in the style of one
-sample exam. The product spec is [MOCKBUDDY_SPEC.md](MOCKBUDDY_SPEC.md); decisions that
-change or refine it are in [docs/DECISIONS.md](docs/DECISIONS.md).
+Practice exams dealt from your own slides, for university students revising for an exam.
+Add a subject, upload your course material and one past exam, and MockBuddy writes a
+brand-new mock in the same style, marks it as you answer and explains every option.
 
-Stack: Next.js 15 (App Router) · Tailwind + shadcn/ui · Postgres (embedded PGlite locally,
-Supabase later) · Drizzle ORM + postgres-js · Gemini API via `@google/genai`
-(`gemini-3.5-flash-lite` for topic labels, `gemini-3.8-flash` for everything else; see
-`MODELS` in `lib/ai/config.ts`) · Zod · KaTeX · unpdf.
+The product spec is [MOCKBUDDY_SPEC.md](MOCKBUDDY_SPEC.md); decisions that change or refine
+it are in [docs/DECISIONS.md](docs/DECISIONS.md). The grading contract the app must keep is
+in [CLAUDE.md](CLAUDE.md).
 
-## Status
+Stack: Next.js 15 (App Router) · Tailwind + shadcn/ui · Supabase (Auth, Postgres, Storage)
+· Drizzle ORM + postgres-js · Gemini API via `@google/genai` (`gemini-3.5-flash-lite` for
+topic labels, `gemini-3.8-flash` for everything else; see `MODELS` in `lib/ai/config.ts`)
+· Zod · KaTeX · unpdf.
 
-Phases 0–6 are built: uploads, extraction, chunking and topic labels; blueprint extraction
-with verbatim sample questions; generation (draft → critique → revise per batch of 5,
-batches one at a time by default for free-tier limits, top-ups for dropped questions);
-taking the exam with immediate marking and explanations; results with a per-topic
-breakdown and REGENERATE; history; the casino theme; and a landing page with a waitlist.
+## How it works
 
-To try the exam and results pages without calling the model, run `npm run db:seed-demo`
-while `npm run dev` is running: it adds a ready 10-question demo mock (kept apart from your
-own material) and prints its link.
+- `/` is public. `/signup` and `/login` take an email and a password (Supabase Auth, no
+  confirmation email) and lead to `/app`. Everything else needs a login.
+- On `/app`, add a subject (the main feature: one text field and a button). Its material,
+  sample exam, mocks and history belong to it.
+- Every account gets 2 free mocks (new or regenerated), enforced on the server.
+- Each user sees only their own data: row level security on every table and on Storage,
+  and the server checks ownership on every request.
 
 ## Run it locally
 
-Requires Node 24. The only setting is a Gemini API key; a free one from
-[Google AI Studio](https://aistudio.google.com/apikey) works.
+Requires Node 24 and a Supabase project (local development uses the same project).
+
+1. In Supabase: Authentication → Sign In / Providers → Email, turn **Confirm email** off.
+2. Supabase → SQL Editor → New query: paste all of [supabase/setup.sql](supabase/setup.sql)
+   and click Run, once.
+3. Copy `.env.example` to `.env.local` and fill it in (it says where each value comes from).
 
 ```bash
 npm install
-cp .env.example .env.local   # then put your key after GEMINI_API_KEY=
 npm run dev
 ```
 
-Open http://localhost:3000 for the landing page, or go straight to the app at
-http://localhost:3000/app. Instead of (or as well as) `.env.local`, you can paste a key
-in the API key field at /app: it is kept only in that browser and takes precedence
-for that browser's requests (see "Bring your own key" in docs/DECISIONS.md). Costs show as
-"free tier" unless you set `GEMINI_TIER=paid`. To run batches in parallel on a paid key,
-set `BATCH_MODE` in `lib/ai/config.ts` to `"parallel"`.
+Open http://localhost:3000. Costs show as "free tier" unless you set `GEMINI_TIER=paid`.
+To run batches in parallel on a paid key, set `BATCH_MODE` in `lib/ai/config.ts` to
+`"parallel"`. Don't run `npm run build` while `npm run dev` is running: they share `.next`.
 
-`npm run dev` also starts an embedded Postgres database
-(stored in `.data/pglite`) and applies the migrations; uploads are stored in
-`.data/uploads`. Both are git-ignored. Don't run `npm run build` while `npm run dev` is
-running: they share the `.next` folder.
-
-1. **Your material**: add slide PDFs, TXT or Markdown files. Each is split into chunks and
-   labelled by topic. `/debug/chunks` shows every chunk and its label.
-2. **Your sample exam**: add one past exam or mock. `/blueprint` shows what was learned
-   from it, including the questions copied verbatim.
-3. **Generate a mock**: choose 5–20 questions and a difficulty. The generation page shows
-   each batch's progress.
-4. **Take it**: one question at a time, marked as soon as you answer, with an explanation
-   for every option. Short answers are marked by the model against the rubric.
-5. **Results**: score, accuracy by topic (HOT and COLD), every question reviewable, and
-   REGENERATE for a fresh mock from the same material and sample exam.
+1. **Subject**: add one, e.g. "Econometrics".
+2. **Your material**: slide PDFs, TXT or Markdown. Each is split into chunks and labelled
+   by topic. `/debug/chunks` shows every chunk and its label.
+3. **Your sample exam**: one past exam or mock. `/blueprint` shows what was learned from it.
+4. **Generate a mock**: 5–20 questions and a difficulty. Uses one free mock.
+5. **Take it**: one question at a time, marked as you answer, with an explanation for every
+   option.
+6. **Results**: score, accuracy by topic (HOT and COLD), and REGENERATE.
 
 ## Scripts
 
 | Script | What it does |
 | --- | --- |
-| `npm run dev` | Embedded database + dev server |
-| `npm run dev:next` | Dev server only, against an external `DATABASE_URL` |
+| `npm run dev` | Dev server (against the Supabase project in `.env.local`) |
 | `npm run build` | Production build |
-| `npm run lint` / `npm run typecheck` / `npm test` | ESLint / TypeScript / unit tests |
+| `npm run lint` / `npm run typecheck` / `npm test` | ESLint / TypeScript / tests (including the RLS test) |
 | `npm run db:generate` | Generate a SQL migration from `lib/db/schema.ts` into `drizzle/` |
-| `npm run db:migrate` | Apply migrations to `DATABASE_URL` (the dev server does this itself locally) |
-| `npm run db:studio` | Browse the database with Drizzle Studio (while `npm run dev` runs) |
-| `npm run db:reset` | Delete the local database (stop the dev server first) |
+| `npm run db:setup-sql` | Rebuild `supabase/setup.sql` from the migrations and `supabase/storage.sql` |
+| `npm run db:studio` | Browse the database with Drizzle Studio |
 
 ## Where things live
 
-- `lib/ai/`: the single model-call wrapper (structured JSON output, 429 backoff with retry
-  counts, refusal handling, LaTeX repair), the per-task model map and settings
-  (`config.ts`), and cost estimates (`pricing.ts`).
-- `lib/ingest/`: extraction, chunking and topic labels (stage A).
-- `lib/blueprint/`: blueprint extraction and its verbatim check (stage B).
-- `lib/generation/`: slot plan, prompts, validation, the draft/critique/revise stage
-  machine and the browser-side runner (stage C).
-- `lib/storage/`: the file storage interface; `lib/storage/index.ts` picks the adapter.
-
-## Moving to Supabase and Vercel later
-
-Deferred until after phase 5 (see docs/DECISIONS.md). Set `DATABASE_URL` to the Supabase
-pooler string, add a Supabase Storage adapter next to `lib/storage/local.ts`, point
-`lib/storage/index.ts` at it, and validate the 60-second request limit on Vercel.
+- `middleware.ts`, `lib/auth.ts`, `lib/supabase/`: sessions, the login gate, Supabase clients.
+- `lib/ownership.ts`: the per-user checks on subjects and exams.
+- `lib/db/schema.ts`: tables and RLS policies; `supabase/`: the setup SQL and its RLS test.
+- `lib/ai/`: the model-call wrapper (structured JSON output, backoff, error messages), the
+  per-task model map and settings (`config.ts`), and cost estimates (`pricing.ts`).
+- `lib/ingest/`, `lib/blueprint/`, `lib/generation/`: stages A, B and C of the pipeline;
+  `lib/generation/quota.ts`: the free-mock quota.
+- `lib/storage/`: file storage (Supabase Storage, as the signed-in user).

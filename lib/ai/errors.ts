@@ -1,6 +1,4 @@
-import type { ApiKey } from "../api-key.ts";
-
-// Turns Gemini API errors into failure kinds with messages the student can act on.
+// Turns Gemini API errors into failure kinds with messages a student can act on.
 // Missing key, invalid key, quota exceeded and rate limited each get their own kind and
 // wording, so the UI can tell them apart. Messages never include the key itself.
 //
@@ -25,8 +23,8 @@ export type ModelFailureKind =
 export const RETRYABLE_KINDS: ReadonlySet<ModelFailureKind> = new Set(["rate_limited", "overloaded", "unavailable", "deadline"]);
 
 /**
- * The key, or the quota behind it, has to be fixed before anything can work; retrying the
- * same request now won't help. Work in progress stays where it is until then.
+ * The server's key, or the quota behind it, has to be fixed (or reset) before anything can
+ * work; retrying the same request now won't help. Work in progress stays where it is.
  */
 export const KEY_PROBLEM_KINDS: ReadonlySet<ModelFailureKind> = new Set(["missing_key", "invalid_key", "quota_exceeded"]);
 
@@ -34,14 +32,16 @@ export interface ClassifiedError {
   kind: ModelFailureKind;
   message: string;
   retryAfterMs?: number;
+  /** For the server log only; never shown. */
+  httpStatus?: number;
 }
 
 export const MISSING_KEY_MESSAGE =
-  "No Gemini API key. Paste your own key in the API key field at /app, or set GEMINI_API_KEY in .env.local.";
+  "MockBuddy's AI isn't set up on this server yet, so generating and marking are unavailable. (Site owner: set GEMINI_API_KEY.)";
 
-export function whoseKey(key: ApiKey): string {
-  return key.source === "browser" ? "the API key you pasted" : "GEMINI_API_KEY from .env.local";
-}
+/** Google rejected the server's key: nothing the student can fix. */
+const KEY_PROBLEM =
+  "MockBuddy's AI service rejected our key, so generating and marking are unavailable right now. This is on our side, not yours; everything you've made is saved.";
 
 /** google.rpc.Status, the body of every Gemini API error. */
 interface RpcStatus {
@@ -64,48 +64,45 @@ interface SdkHttpError extends Error {
   error?: unknown;
 }
 
-/** Null when `error` is not an error from the Gemini SDK. */
-export function classifyApiError(error: unknown, key: ApiKey, context: { attempts: number; retries429: number }): ClassifiedError | null {
+/**
+ * Null when `error` is not an error from the Gemini SDK. `secret` is the server's API key,
+ * cut out of anything Google echoes back. Messages are for students: they say what went
+ * wrong and what to do, and keep HTTP codes to the logs. The key belongs to the site, so a
+ * key problem is never presented as the student's to fix.
+ */
+export function classifyApiError(error: unknown, context: { attempts: number; retries429: number }, secret?: string): ClassifiedError | null {
   if (!(error instanceof Error)) return null;
   // The SDK refuses Live-API ephemeral tokens (auth_tokens/…) itself, before sending anything.
   if (/ephemeral tokens are only supported/i.test(error.message)) {
-    return {
-      kind: "invalid_key",
-      message: `${capitalize(whoseKey(key))} is an ephemeral token, which only works with Gemini's Live API. Use an API key from Google AI Studio instead.`,
-    };
+    return { kind: "invalid_key", message: `${KEY_PROBLEM} (GEMINI_API_KEY is an ephemeral Live-API token, not an API key.)` };
   }
-  if (error.name === "APIConnectionTimeoutError") return { kind: "unavailable", message: "The model call timed out." };
+  if (error.name === "APIConnectionTimeoutError") return { kind: "unavailable", message: "The AI service took too long to answer. Try again." };
   if (error.name === "APIConnectionError" || error.name === "APIUserAbortError") {
-    return { kind: "unavailable", message: `Couldn't reach the Gemini API: ${error.message}` };
+    return { kind: "unavailable", message: "Couldn't reach the AI service. Check your connection and try again." };
   }
   if (!isHttpError(error)) return null;
+  const classified = classifyHttpError(error, context, secret);
+  return { ...classified, httpStatus: error.status };
+}
 
+function classifyHttpError(error: SdkHttpError, context: { attempts: number; retries429: number }, secret?: string): ClassifiedError {
   const rpc = rpcStatus(error);
-  const detail = redactKey(rpc.message ?? error.message, key);
+  const detail = redactKey(rpc.message ?? error.message, secret);
   const reasons = (rpc.details ?? []).flatMap((d) => (d.reason ? [d.reason] : []));
   const quotaIds = (rpc.details ?? []).flatMap((d) => d.violations ?? []).flatMap((v) => (v.quotaId ? [v.quotaId] : []));
   const retryAfter = retryDelayMs(rpc) ?? retryAfterMs(error.headers);
+  const google = `Google said: ${firstLine(detail)}`;
 
   if (error.status === 401 || reasons.some((r) => r.startsWith("API_KEY_")) || /api key not valid|api key expired/i.test(detail)) {
-    const fix =
-      key.source === "browser"
-        ? "Clear it at /app and paste a valid key from Google AI Studio."
-        : "Fix it in .env.local, or paste a valid key at /app.";
-    return {
-      kind: "invalid_key",
-      message: `Google rejected ${whoseKey(key)}: it's wrong, expired or has been deleted. ${fix} Google said: ${firstLine(detail)}`,
-    };
+    return { kind: "invalid_key", message: `${KEY_PROBLEM} ${google}` };
   }
   if (/leaked/i.test(detail)) {
-    return {
-      kind: "invalid_key",
-      message: `Google has blocked ${whoseKey(key)} because it was reported as leaked. Create a new key in Google AI Studio and use that instead.`,
-    };
+    return { kind: "invalid_key", message: `${KEY_PROBLEM} (Google blocked the key as leaked; it needs replacing.)` };
   }
   if (error.status === 403) {
     return {
       kind: "invalid_key",
-      message: `Google refused ${whoseKey(key)} for this request (HTTP 403): ${firstLine(detail)} Google rejects unrestricted standard keys and long-unused ones; the key's project may also not have the Gemini API enabled or access to this model.`,
+      message: `${KEY_PROBLEM} ${google} (Google rejects unrestricted standard keys and long-unused ones; the key's project may also lack the Gemini API.)`,
     };
   }
 
@@ -115,34 +112,30 @@ export function classifyApiError(error: unknown, key: ApiKey, context: { attempt
     const spendCap = /spend|billing|prepa(y|id)|credits?\b/i.test(detail) && quotaIds.length === 0;
     if (daily || noFreeQuota || spendCap) {
       const why = noFreeQuota
-        ? "has no quota for this model (it may not be on the free tier)"
+        ? "MockBuddy's AI plan doesn't include this model right now"
         : daily
-          ? "has used up today's requests for this model. Free-tier daily limits reset at midnight Pacific time"
-          : "has reached its spending limit";
-      return {
-        kind: "quota_exceeded",
-        message: `The Google project behind ${whoseKey(key)} ${why}. Check the rate-limit page in Google AI Studio, wait for the reset, or use a key with billing enabled. Google said: ${firstLine(detail)}`,
-      };
+          ? "MockBuddy has used up today's AI allowance. It resets at midnight Pacific time (09:00 in Spain), so try again then"
+          : "MockBuddy has reached its AI spending limit for now";
+      return { kind: "quota_exceeded", message: `${why}. Everything you've made is saved. ${google}` };
     }
     return {
       kind: "rate_limited",
-      message: `Rate limited by Gemini (HTTP 429): still limited after ${context.attempts} attempt(s) and ${context.retries429} automatic retries. Wait a minute and try again; free-tier keys allow only a few requests per minute.`,
+      message: `The AI service is busy (still busy after ${context.attempts} attempt(s) and ${context.retries429} automatic retries). Wait a minute and try again.`,
       retryAfterMs: retryAfter,
     };
   }
 
   if (error.status === 400 && rpc.status === "FAILED_PRECONDITION" && /free tier|billing/i.test(detail)) {
-    return {
-      kind: "quota_exceeded",
-      message: `The Gemini free tier isn't available for the project behind ${whoseKey(key)} here. Enable billing on the project in Google AI Studio, or use a key that has it. Google said: ${firstLine(detail)}`,
-    };
+    return { kind: "quota_exceeded", message: `MockBuddy's AI plan isn't available from this region right now. ${google}` };
   }
-  if (error.status === 503) return { kind: "overloaded", message: "The Gemini model is overloaded (HTTP 503).", retryAfterMs: retryAfter };
-  if (error.status >= 500) return { kind: "unavailable", message: `The Gemini API failed (HTTP ${error.status}).`, retryAfterMs: retryAfter };
+  if (error.status === 503) {
+    return { kind: "overloaded", message: "The AI model is overloaded right now. Wait a moment and try again.", retryAfterMs: retryAfter };
+  }
+  if (error.status >= 500) return { kind: "unavailable", message: "The AI service had a problem. Try again in a moment.", retryAfterMs: retryAfter };
   if (error.status === 404) {
-    return { kind: "api", message: `Gemini doesn't know this model (HTTP 404): ${detail} Check MODELS in lib/ai/config.ts.` };
+    return { kind: "api", message: `The AI model MockBuddy asked for isn't available. ${google} (Check MODELS in lib/ai/config.ts.)` };
   }
-  return { kind: "api", message: `The Gemini API rejected the request (HTTP ${error.status}): ${detail}` };
+  return { kind: "api", message: `The AI service refused the request. ${google}` };
 }
 
 function isHttpError(error: Error): error is SdkHttpError {
@@ -162,13 +155,9 @@ function rpcStatus(error: SdkHttpError): RpcStatus {
  * Google's messages can quote the key (e.g. "Consumer 'api_key:…' has been suspended"), and
  * these messages are shown and logged, so the key is cut out before anything uses them.
  */
-function redactKey(text: string, key: ApiKey): string {
-  const withoutValue = key.source === "browser" ? text.split(key.value).join("[your key]") : text;
+function redactKey(text: string, secret: string | undefined): string {
+  const withoutValue = secret ? text.split(secret).join("[key]") : text;
   return withoutValue.replace(/api_key:[^\s'"]+/gi, "api_key:[redacted]");
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function firstLine(text: string): string {

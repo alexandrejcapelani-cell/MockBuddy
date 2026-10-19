@@ -13,7 +13,7 @@ export function MaterialActions({ id, filename, failed }: { id: string; filename
   async function retry() {
     setPending("retry");
     setError(null);
-    const result = await postJson("/api/materials/ingest", { materialId: id }, { withApiKey: true });
+    const result = await postJson("/api/materials/ingest", { materialId: id });
     if (!result.ok) setError(result.error);
     setPending(null);
     router.refresh();

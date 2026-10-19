@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { ownsExam } from "@/lib/ownership";
 import { MathText } from "@/components/math-text";
 import { PayoutCounter } from "@/components/payout-counter";
 import { formatMarks, QuestionReveal, verdictText } from "@/components/question-reveal";
@@ -8,6 +10,7 @@ import { computeResults } from "@/lib/exam/results";
 import { loadExamForTaking } from "@/lib/exam/taking";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
 import { RequestError } from "@/lib/http";
+import { freeMocksLeft } from "@/lib/generation/quota";
 import { RegenerateButton } from "./regenerate-button";
 
 export const dynamic = "force-dynamic";
@@ -15,11 +18,13 @@ export const dynamic = "force-dynamic";
 /** Screen 4, the payout: the score, the topic board, REGENERATE and every question reviewed. */
 export default async function ResultsPage({ params }: { params: Promise<{ examId: string }> }) {
   const { examId } = await params;
-  if (!z.uuid().safeParse(examId).success) notFound();
+  const user = await requireUser();
+  if (!z.uuid().safeParse(examId).success || !(await ownsExam(user.id, examId))) notFound();
   const { exam, questions } = await loadExamForTaking(examId).catch((error: unknown) => {
     if (error instanceof RequestError && error.status === 404) notFound();
     throw error;
   });
+  const left = await freeMocksLeft(user.id);
   const results = computeResults(questions);
   const unanswered = results.total - results.answered;
 
@@ -111,7 +116,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ examId
         </p>
       </section>
 
-      <RegenerateButton examId={examId} />
+      <RegenerateButton examId={examId} freeMocksLeft={left} />
 
       <section aria-labelledby="review-heading" className="space-y-4">
         <h2 id="review-heading" className="text-2xl font-semibold">
@@ -140,7 +145,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ examId
         </ol>
       </section>
 
-      <RegenerateButton examId={examId} />
+      <RegenerateButton examId={examId} freeMocksLeft={left} />
     </main>
   );
 }

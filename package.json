@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/dev.mjs",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -11,14 +11,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "dev:next": "next dev --turbopack",
-    "db:reset": "rm -rf .data/pglite",
-    "test": "node --test 'lib/**/*.test.ts'",
-    "db:seed-demo": "node scripts/seed-demo.mjs"
+    "test": "node --test 'lib/**/*.test.ts' 'supabase/test/*.test.ts'",
+    "db:setup-sql": "node scripts/setup-sql.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@google/genai": "^2.30.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
     "drizzle-orm": "^0.45.4",
@@ -36,7 +36,6 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10",
-    "@electric-sql/pglite-socket": "^0.2.13",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.19.2",

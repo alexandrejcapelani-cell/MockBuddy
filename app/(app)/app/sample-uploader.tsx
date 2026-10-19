@@ -9,7 +9,7 @@ import { postJson, uploadFile } from "@/lib/upload-client";
 type Phase = "idle" | "uploading" | "reading" | "done" | "failed";
 
 /** Uploads one sample exam and builds its blueprint, replacing the current one. */
-export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
+export function SampleUploader({ subjectId, hasBlueprint }: { subjectId: string; hasBlueprint: boolean }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
     if (!file) return;
     setMessage(null);
     setPhase("uploading");
-    const uploaded = await uploadFile(file, "sample");
+    const uploaded = await uploadFile(file, "sample", subjectId);
     if (!uploaded.ok) {
       setPhase("failed");
       setMessage(uploaded.error);
@@ -28,8 +28,7 @@ export function SampleUploader({ hasBlueprint }: { hasBlueprint: boolean }) {
     setPhase("reading");
     const result = await postJson<{ calls: CallSummaryInput[] }>(
       "/api/blueprint",
-      { storagePath: uploaded.data.storagePath, filename: file.name },
-      { withApiKey: true },
+      { subjectId, storagePath: uploaded.data.storagePath, filename: file.name },
     );
     if (!result.ok) {
       setPhase("failed");

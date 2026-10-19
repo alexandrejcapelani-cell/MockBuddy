@@ -1,17 +1,13 @@
 // Browser-side helpers for the upload flow: ask for an upload target, send the bytes
 // straight to it, then hand only the storage path to the backend.
 
-import { apiKeyHeaders } from "./api-key-client.ts";
 import type { UploadKind } from "./files";
 
 export type JsonResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string; data: Record<string, unknown> };
 
-/**
- * POSTs JSON. `withApiKey` adds the key pasted in this browser, if any, as a header: use it
- * only for routes that call the model.
- */
-export async function postJson<T>(url: string, body: unknown, options: { withApiKey?: boolean } = {}): Promise<JsonResult<T>> {
-  const headers = { "Content-Type": "application/json", ...(options.withApiKey ? apiKeyHeaders() : {}) };
+/** POSTs JSON to one of the app's routes; the session cookie goes with it. */
+export async function postJson<T>(url: string, body: unknown): Promise<JsonResult<T>> {
+  const headers = { "Content-Type": "application/json" };
   let response: Response;
   try {
     response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
@@ -43,8 +39,9 @@ interface UploadTargetResponse {
   upload: { url: string; method: "PUT"; headers: Record<string, string> };
 }
 
-export async function uploadFile(file: File, kind: UploadKind): Promise<JsonResult<{ storagePath: string }>> {
-  const target = await postJson<UploadTargetResponse>("/api/upload-url", { kind, filename: file.name, size: file.size });
+/** Uploads straight to Supabase Storage, into the signed-in user's folder for this subject's files. */
+export async function uploadFile(file: File, kind: UploadKind, subjectId: string): Promise<JsonResult<{ storagePath: string }>> {
+  const target = await postJson<UploadTargetResponse>("/api/upload-url", { subjectId, kind, filename: file.name, size: file.size });
   if (!target.ok) return target;
 
   let response: Response;

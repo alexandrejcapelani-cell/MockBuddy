@@ -1,19 +1,24 @@
 import Link from "next/link";
 import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
 import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
-import { serverEnv } from "@/lib/env";
+import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { ownedSubject } from "@/lib/ownership";
 
 // Phase 2 review page: the blueprint and the verbatim sample questions, so you can check
 // they reflect the real paper before anything is generated from them.
 export const dynamic = "force-dynamic";
 
-export default async function BlueprintPage() {
-  const blueprint = await activeBlueprint(serverEnv("DEMO_USER_ID"));
+export default async function BlueprintPage({ searchParams }: { searchParams: Promise<{ subject?: string }> }) {
+  const user = await requireUser();
+  const { subject: subjectId } = await searchParams;
+  const subject = subjectId && isUuid(subjectId) ? await ownedSubject(user.id, subjectId) : null;
+  const blueprint = subject ? await activeBlueprint(subject.id) : null;
 
   return (
     <main className="mx-auto max-w-3xl space-y-8 p-6 text-sm">
       <header className="space-y-1">
-        <Link href="/app" className="underline">
+        <Link href={subject ? `/app?subject=${subject.id}` : "/app"} className="underline">
           ← Back
         </Link>
         <h1 className="text-2xl font-semibold">Blueprint</h1>
@@ -25,7 +30,7 @@ export default async function BlueprintPage() {
       </header>
 
       {!blueprint ? (
-        <p>No sample exam yet. Upload one on the home page.</p>
+        <p>No sample exam for this subject yet. Upload one at the table.</p>
       ) : (
         <>
           <section aria-labelledby="overview-heading" className="space-y-2">
@@ -95,4 +100,8 @@ export default async function BlueprintPage() {
       )}
     </main>
   );
+}
+
+function isUuid(value: string) {
+  return z.uuid().safeParse(value).success;
 }

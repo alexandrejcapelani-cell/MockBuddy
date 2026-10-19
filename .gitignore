@@ -44,3 +44,6 @@ next-env.d.ts
 # local database and uploads (npm run dev)
 /.data/
 /.data-user/
+
+# The course brief (IE material). Kept local rather than republished in the public repo.
+/ASSIGNMENT.md

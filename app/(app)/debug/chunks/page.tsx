@@ -1,30 +1,21 @@
 import { asc, desc, eq } from "drizzle-orm";
+import { z } from "zod";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { chunks, materials } from "@/lib/db/schema";
-import { serverEnv } from "@/lib/env";
+import { requireUser } from "@/lib/auth";
+import { ownedSubject } from "@/lib/ownership";
 import { ADMIN_TOPIC } from "@/lib/ingest/topic-labels";
 
 // Phase 1 debug view: every chunk with its labels, so chunking quality is visible before
 // generation depends on it.
 export const dynamic = "force-dynamic";
 
-export default async function ChunksPage() {
-  const rows = await db()
-    .select({
-      materialId: materials.id,
-      filename: materials.filename,
-      chunkId: chunks.id,
-      ordinal: chunks.ordinal,
-      sectionLabel: chunks.sectionLabel,
-      topicLabel: chunks.topicLabel,
-      tokenEstimate: chunks.tokenEstimate,
-      content: chunks.content,
-    })
-    .from(chunks)
-    .innerJoin(materials, eq(chunks.materialId, materials.id))
-    .where(eq(materials.userId, serverEnv("DEMO_USER_ID")))
-    .orderBy(desc(materials.createdAt), asc(chunks.ordinal));
+export default async function ChunksPage({ searchParams }: { searchParams: Promise<{ subject?: string }> }) {
+  const user = await requireUser();
+  const { subject: subjectId } = await searchParams;
+  const subject = subjectId && isUuid(subjectId) ? await ownedSubject(user.id, subjectId) : null;
+  const rows = subject ? await chunksOf(subject.id) : [];
 
   const topicCounts = new Map<string, number>();
   for (const row of rows) {
@@ -36,7 +27,7 @@ export default async function ChunksPage() {
   return (
     <main className="mx-auto max-w-5xl space-y-8 p-6 text-sm">
       <header className="space-y-1">
-        <Link href="/app" className="underline">
+        <Link href={subject ? `/app?subject=${subject.id}` : "/app"} className="underline">
           ← Back
         </Link>
         <h1 className="text-2xl font-semibold">Chunks</h1>
@@ -96,4 +87,27 @@ export default async function ChunksPage() {
       ))}
     </main>
   );
+}
+
+/** Every chunk of the subject's material (the subject is already checked as the user's). */
+function chunksOf(subjectId: string) {
+  return db()
+    .select({
+      materialId: materials.id,
+      filename: materials.filename,
+      chunkId: chunks.id,
+      ordinal: chunks.ordinal,
+      sectionLabel: chunks.sectionLabel,
+      topicLabel: chunks.topicLabel,
+      tokenEstimate: chunks.tokenEstimate,
+      content: chunks.content,
+    })
+    .from(chunks)
+    .innerJoin(materials, eq(chunks.materialId, materials.id))
+    .where(eq(materials.subjectId, subjectId))
+    .orderBy(desc(materials.createdAt), asc(chunks.ordinal));
+}
+
+function isUuid(value: string) {
+  return z.uuid().safeParse(value).success;
 }

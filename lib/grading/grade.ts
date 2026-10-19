@@ -1,6 +1,5 @@
 import "server-only";
 import { type CallMetrics, generateValidatedJson, schemaText } from "@/lib/ai/call";
-import type { ApiKey } from "@/lib/api-key";
 import type { questions } from "@/lib/db/schema";
 import { NumericJudgementSchema, ShortAnswerGradeSchema } from "@/lib/schemas";
 import { NUMERIC_JUDGE_SYSTEM, numericJudgePrompt, SHORT_GRADING_SYSTEM, shortGradingPrompt } from "./prompts";
@@ -21,14 +20,14 @@ export interface Grade {
   calls: CallMetrics[];
 }
 
-export async function gradeAnswer(question: Question, response: string, apiKey: ApiKey, deadlineAt: number | undefined): Promise<Grade> {
+export async function gradeAnswer(question: Question, response: string, deadlineAt: number | undefined): Promise<Grade> {
   switch (question.type) {
     case "mcq":
       return gradeMcq(question, response);
     case "numerical":
-      return gradeNumerical(question, response, apiKey, deadlineAt);
+      return gradeNumerical(question, response, deadlineAt);
     case "short":
-      return gradeShort(question, response, apiKey, deadlineAt);
+      return gradeShort(question, response, deadlineAt);
   }
 }
 
@@ -37,7 +36,7 @@ function gradeMcq(question: Question, response: string): Grade {
   return { isCorrect: correct, awardedMarks: correct ? question.marks : 0, feedback: null, rubricMarks: null, calls: [] };
 }
 
-async function gradeNumerical(question: Question, response: string, apiKey: ApiKey, deadlineAt: number | undefined): Promise<Grade> {
+async function gradeNumerical(question: Question, response: string, deadlineAt: number | undefined): Promise<Grade> {
   const answer = question.numericAnswer!;
   const tolerance = question.tolerance ?? 0;
   if (response.trim() === "") return unanswered();
@@ -74,14 +73,13 @@ async function gradeNumerical(question: Question, response: string, apiKey: ApiK
         },
       ],
       deadlineAt,
-      apiKey,
     },
     (judgement) => (judgement.feedback.trim() === "" ? ["feedback is empty."] : []),
   );
   return { isCorrect: data.is_correct, awardedMarks: data.is_correct ? question.marks : 0, feedback: data.feedback, rubricMarks: null, calls };
 }
 
-async function gradeShort(question: Question, response: string, apiKey: ApiKey, deadlineAt: number | undefined): Promise<Grade> {
+async function gradeShort(question: Question, response: string, deadlineAt: number | undefined): Promise<Grade> {
   const rubric = question.rubric ?? [];
   if (response.trim() === "") return unanswered();
 
@@ -104,7 +102,6 @@ async function gradeShort(question: Question, response: string, apiKey: ApiKey, 
         },
       ],
       deadlineAt,
-      apiKey,
     },
     (grade) => shortGradeIssues(grade, rubric),
   );

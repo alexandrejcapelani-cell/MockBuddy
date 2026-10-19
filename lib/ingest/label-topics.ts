@@ -1,6 +1,5 @@
 import "server-only";
 import { type CallMetrics, generateValidatedJson, schemaText } from "@/lib/ai/call";
-import type { ApiKey } from "@/lib/api-key";
 import { TopicLabelsSchema } from "@/lib/schemas";
 import {
   type ChunkForLabelling,
@@ -18,7 +17,7 @@ import {
 export async function labelTopics(
   chunks: ChunkForLabelling[],
   existingLabels: string[],
-  context: { materialId: string; deadlineAt?: number; apiKey: ApiKey },
+  context: { materialId: string; deadlineAt?: number },
 ): Promise<{ labels: Map<number, string>; calls: CallMetrics[] }> {
   const labels = new Map<number, string>();
   const calls: CallMetrics[] = [];
@@ -35,7 +34,6 @@ export async function labelTopics(
         messages: [{ role: "user", content: topicLabelPrompt(batch, [...known].sort(), schemaText(TopicLabelsSchema)) }],
         task: "topicLabels",
         deadlineAt: context.deadlineAt,
-        apiKey: context.apiKey,
       },
       (response) => topicLabelIssues(response, indexes),
     );

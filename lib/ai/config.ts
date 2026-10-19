@@ -57,12 +57,17 @@ export function batchConcurrency(): number {
   return BATCH_MODE === "parallel" ? PARALLEL_BATCHES : 1;
 }
 
-/** Vercel's function limit. Locally nothing enforces it, so requests only warn past it. */
-export const SERVERLESS_LIMIT_MS = 60_000;
+/**
+ * Vercel's function limit on the Hobby plan with Fluid compute (on by default): 300 s.
+ * Every AI route exports `maxDuration = 300` (as a literal: Next.js reads it statically).
+ * Locally nothing enforces it, so requests only warn past it.
+ */
+export const REQUEST_LIMIT_SECONDS = 300;
+export const SERVERLESS_LIMIT_MS = REQUEST_LIMIT_SECONDS * 1_000;
 
-/** When a request must have finished, or undefined locally where no limit applies. */
+/** When a request must have finished (10 s inside the limit, on Vercel), or undefined locally. */
 export function requestDeadline(startedAt: number): number | undefined {
-  return process.env.VERCEL === "1" ? startedAt + 55_000 : undefined;
+  return process.env.VERCEL === "1" ? startedAt + SERVERLESS_LIMIT_MS - 10_000 : undefined;
 }
 
 /** Logs a warning when a request ran longer than it would be allowed to on Vercel. */

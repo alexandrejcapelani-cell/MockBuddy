@@ -9,6 +9,7 @@ import { ADMIN_TOPIC } from "@/lib/ingest/topic-labels";
 import type { BlueprintSection } from "@/lib/schemas";
 import { ancestorExamIds, loadExam } from "./context";
 import { BATCH_SIZE, batchOrdinals, buildPlan, type PlannableChunk, selectChunks, slotFor } from "./plan";
+import { FREE_MOCKS, FreeMocksUsedError, mocksUsed } from "./quota";
 import type { ExamDifficulty, PlanSlot } from "./types";
 
 // Exam-level steps of stage C: create an exam and its batches, top up dropped questions,
@@ -19,17 +20,24 @@ export const MAX_TOPUP_BATCHES = 2;
 
 export const QUESTION_COUNTS = [5, 10, 15, 20] as const;
 
+/**
+ * Creates a mock for one of the user's subjects (already checked as theirs), using up one
+ * of their free mocks. Throws FreeMocksUsedError when none are left.
+ */
 export async function createExam(input: {
   userId: string;
+  subjectId: string;
   questionCount: (typeof QUESTION_COUNTS)[number];
   difficulty: ExamDifficulty;
   parentExamId?: string;
-  /** Defaults to the user's active blueprint (the latest sample exam). */
+  /** Defaults to the subject's active blueprint (its latest sample exam). */
   blueprintId?: string;
 }): Promise<{ examId: string; batches: number }> {
-  const blueprint = input.blueprintId ? await blueprintById(input.blueprintId) : await activeBlueprint(input.userId);
+  // A quick check first, so a user with no mocks left gets the friendly note, not "upload a sample".
+  if ((await mocksUsed(input.userId)) >= FREE_MOCKS) throw new FreeMocksUsedError();
+  const blueprint = input.blueprintId ? await blueprintById(input.blueprintId) : await activeBlueprint(input.subjectId);
   if (!blueprint) throw new RequestError("Upload a sample exam first: generation needs its blueprint.", 409);
-  const pool = await plannableChunks(input.userId);
+  const pool = await plannableChunks(input.subjectId);
   if (pool.length === 0) throw new RequestError("Add some material first: there are no labelled chunks to write questions from.", 409);
 
   const parent = input.parentExamId ? await loadExam(input.parentExamId) : null;
@@ -45,9 +53,14 @@ export async function createExam(input: {
   });
 
   const examId = await db().transaction(async (tx) => {
+    // The real check: one at a time per user, so two requests can't both take the last free mock.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`quota:${input.userId}`}))`);
+    if ((await mocksUsed(input.userId, tx)) >= FREE_MOCKS) throw new FreeMocksUsedError();
     const [exam] = await tx
       .insert(exams)
       .values({
+        userId: input.userId,
+        subjectId: input.subjectId,
         blueprintId: blueprint.id,
         parentExamId: parent?.id ?? null,
         questionCount: input.questionCount,
@@ -76,7 +89,8 @@ export async function regenerateExam(examId: string): Promise<{ examId: string; 
   const blueprint = await blueprintById(exam.blueprintId);
   if (!blueprint) throw new RequestError("This mock's sample exam no longer exists.", 409);
   return createExam({
-    userId: blueprint.userId,
+    userId: exam.userId,
+    subjectId: exam.subjectId,
     questionCount: exam.questionCount as (typeof QUESTION_COUNTS)[number],
     difficulty: exam.difficulty,
     parentExamId: exam.id,
@@ -89,15 +103,15 @@ async function blueprintById(id: string) {
   return blueprint ?? null;
 }
 
-/** Labelled chunks from processed material, minus non-teaching chunks. */
-async function plannableChunks(userId: string): Promise<PlannableChunk[]> {
+/** The subject's labelled chunks from processed material, minus non-teaching chunks. */
+async function plannableChunks(subjectId: string): Promise<PlannableChunk[]> {
   const rows = await db()
     .select({ id: chunks.id, topicLabel: chunks.topicLabel, ordinal: chunks.ordinal, materialId: chunks.materialId })
     .from(chunks)
     .innerJoin(materials, eq(chunks.materialId, materials.id))
     .where(
       and(
-        eq(materials.userId, userId),
+        eq(materials.subjectId, subjectId),
         eq(materials.status, "chunked"),
         isNotNull(chunks.topicLabel),
         ne(chunks.topicLabel, ADMIN_TOPIC),
@@ -134,13 +148,9 @@ export type TopupResult =
 export async function requestTopup(examId: string): Promise<TopupResult> {
   // Read outside the transaction: inside it, every query must go through `tx` (locally the
   // app has a single database connection, which the transaction holds).
-  const [owner] = await db()
-    .select({ userId: blueprints.userId })
-    .from(exams)
-    .innerJoin(blueprints, eq(exams.blueprintId, blueprints.id))
-    .where(eq(exams.id, examId));
+  const [owner] = await db().select({ subjectId: exams.subjectId }).from(exams).where(eq(exams.id, examId));
   if (!owner) throw new RequestError("That exam doesn't exist.", 404);
-  const pool = await plannableChunks(owner.userId);
+  const pool = await plannableChunks(owner.subjectId);
 
   return db().transaction(async (tx) => {
     const [exam] = await tx.select().from(exams).where(eq(exams.id, examId)).for("update");

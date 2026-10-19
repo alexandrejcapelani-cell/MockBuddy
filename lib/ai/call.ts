@@ -1,7 +1,6 @@
 import "server-only";
 import { GoogleGenAI, type GoogleGenAIInteraction as Interaction } from "@google/genai";
 import type { z } from "zod";
-import type { ApiKey } from "@/lib/api-key";
 import { ConfigError, serverEnv } from "@/lib/env";
 import { MAX_TOKENS, MODELS, type ModelTask, THINKING } from "./config";
 import {
@@ -52,7 +51,7 @@ export class ModelCallError extends Error {
     readonly kind: ModelFailureKind,
     message: string,
     readonly metrics: CallMetrics,
-    readonly details: { issues?: string[]; rawText?: string; retryAfterMs?: number } = {},
+    readonly details: { issues?: string[]; rawText?: string; retryAfterMs?: number; httpStatus?: number } = {},
   ) {
     super(message);
   }
@@ -62,7 +61,7 @@ export class ModelCallError extends Error {
     return RETRYABLE_KINDS.has(this.kind);
   }
 
-  /** True when the API key is missing or invalid, or its quota is used up: fix that, then retry. */
+  /** True when the server's API key is missing or invalid, or its quota is used up: fix that, then retry. */
   get keyProblem(): boolean {
     return KEY_PROBLEM_KINDS.has(this.kind);
   }
@@ -90,8 +89,6 @@ export interface JsonCall<S extends z.ZodType> {
   task: ModelTask;
   /** Epoch ms by which the call must have finished (set on Vercel only). */
   deadlineAt?: number;
-  /** The key for this call. A browser key is used for this call only: never stored or logged. */
-  apiKey: ApiKey;
 }
 
 export interface JsonResult<T> {
@@ -135,7 +132,7 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
   try {
     interaction = await sendWithRetries(call, metrics);
   } catch (error) {
-    if (error instanceof ModelCallError) finish(error.kind, { error: error.message });
+    if (error instanceof ModelCallError) finish(error.kind, { error: error.message, httpStatus: error.details.httpStatus });
     else finish("unexpected_error", { error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
@@ -258,7 +255,7 @@ async function sendWithRetries<S extends z.ZodType>(call: JsonCall<S>, metrics: 
     }
 
     try {
-      return await clientFor(call.apiKey).interactions.create(
+      return await client().interactions.create(
         {
           model: MODELS[call.task],
           system_instruction: call.system,
@@ -295,9 +292,12 @@ function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metric
   ) {
     return new ModelCallError("deadline", "The model call ran out of time in this request.", metrics, { retryAfterMs: 0 });
   }
-  const classified = classifyApiError(error, call.apiKey, metrics);
+  const classified = classifyApiError(error, metrics, process.env.GEMINI_API_KEY);
   if (!classified) throw error;
-  return new ModelCallError(classified.kind, classified.message, metrics, { retryAfterMs: classified.retryAfterMs });
+  return new ModelCallError(classified.kind, classified.message, metrics, {
+    retryAfterMs: classified.retryAfterMs,
+    httpStatus: classified.httpStatus,
+  });
 }
 
 function backoffMs(attempt: number, retryAfter: number | undefined): number {
@@ -326,12 +326,11 @@ export function schemaText(schema: z.ZodType): string {
 const globalForGemini = globalThis as unknown as { mockbuddyGemini?: GoogleGenAI };
 
 /**
- * The server's own client (GEMINI_API_KEY) is cached. A key pasted in the browser gets a
- * client for this call only, so it is never kept in memory beyond the request. The key is
- * always passed explicitly, so the SDK never falls back to GOOGLE_API_KEY from the shell.
+ * One client per server instance, with the server's key (GEMINI_API_KEY), which never
+ * leaves the server. The key is passed explicitly, so the SDK never falls back to a
+ * GOOGLE_API_KEY from the environment.
  */
-function clientFor(apiKey: ApiKey): GoogleGenAI {
-  if (apiKey.source === "browser") return new GoogleGenAI({ apiKey: apiKey.value });
+function client(): GoogleGenAI {
   globalForGemini.mockbuddyGemini ??= new GoogleGenAI({ apiKey: serverEnv("GEMINI_API_KEY") });
   return globalForGemini.mockbuddyGemini;
 }

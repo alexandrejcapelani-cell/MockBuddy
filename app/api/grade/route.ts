@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requestDeadline, warnIfOverServerlessLimit } from "@/lib/ai/config";
+import { requireApiUser } from "@/lib/auth";
 import { submitAnswer } from "@/lib/exam/taking";
-import { errorResponse, parseBody, requestApiKey } from "@/lib/http";
+import { errorResponse, parseBody } from "@/lib/http";
+import { requireOwnedExam } from "@/lib/ownership";
 
-export const maxDuration = 60;
+// A literal, because Next.js reads it statically; keep it equal to REQUEST_LIMIT_SECONDS.
+export const maxDuration = 300;
 
 const Body = z.object({
   examId: z.uuid(),
@@ -21,10 +24,11 @@ export async function POST(request: Request) {
   const startedAt = Date.now();
   let context: Record<string, unknown> = {};
   try {
-    const apiKey = requestApiKey(request);
+    const user = await requireApiUser();
     const { examId, questionId, response } = await parseBody(request, Body);
     context = { examId, questionId };
-    const result = await submitAnswer({ examId, questionId, response, apiKey, deadlineAt: requestDeadline(startedAt) });
+    await requireOwnedExam(user.id, examId);
+    const result = await submitAnswer({ examId, questionId, response, deadlineAt: requestDeadline(startedAt) });
     return NextResponse.json(result);
   } catch (error) {
     return errorResponse(error, context);

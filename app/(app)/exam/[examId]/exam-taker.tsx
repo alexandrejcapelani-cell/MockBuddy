@@ -41,7 +41,6 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
     const result = await postJson<{ question: QuestionView }>(
       "/api/grade",
       { examId, questionId: view.id, response },
-      { withApiKey: true },
     );
     setPending(null);
     if (!result.ok) {

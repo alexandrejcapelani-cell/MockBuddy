@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 
-// Shown when a page fails to render, e.g. when the local database isn't running.
+// Shown when a page fails to render. In production Next.js hides the message and shows only
+// the reference, which matches the server log.
 export default function ErrorPage({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
     <main className="mx-auto max-w-xl space-y-4 px-4 py-16">
@@ -12,10 +13,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
           {error.message}
         </p>
         {error.digest && <p className="text-sm text-dim">Error reference: {error.digest}</p>}
-        <p className="text-sm text-dim">
-          If this says the database is unreachable, start the app with <code>npm run dev</code>, which starts the local
-          database too.
-        </p>
+        <p className="text-sm text-dim">Nothing you saved is lost. Try again, or go back to the table.</p>
         <div className="flex flex-wrap gap-3">
           <button type="button" className="btn-gold" onClick={reset}>
             Try again

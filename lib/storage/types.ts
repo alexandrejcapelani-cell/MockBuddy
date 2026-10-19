@@ -3,11 +3,10 @@
  * that does work on them: it asks for an upload target, sends the bytes straight to
  * it, and passes only the storage path to the backend.
  *
- * Implementations: lib/storage/local.ts (files under .data/uploads). A Supabase
- * Storage adapter implements the same interface; lib/storage/index.ts picks one.
+ * Implementation: lib/storage/supabase.ts (Supabase Storage); lib/storage/index.ts picks it.
  */
 export interface FileStorage {
-  readonly kind: "local" | "supabase";
+  readonly kind: "supabase";
 
   /** A short-lived target the browser can PUT the file bytes to. */
   createUploadTarget(path: string, options: { contentType: string; maxBytes: number }): Promise<UploadTarget>;

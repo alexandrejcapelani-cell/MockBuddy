@@ -1,7 +1,6 @@
 import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { type CallMetrics, generateValidatedJson, schemaText } from "@/lib/ai/call";
-import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { blueprints } from "@/lib/db/schema";
 import { classifyUpload, isOwnedStoragePath } from "@/lib/files";
@@ -15,16 +14,17 @@ import { blueprintIssues, MAX_SAMPLE_TEXT_CHARS, toStoredBlueprint } from "./rul
 export type BlueprintRow = typeof blueprints.$inferSelect;
 
 /**
- * Stage B: reads the uploaded sample exam and stores its blueprint. The newest blueprint
- * is the active one, so uploading another sample replaces it. The sample exam's text is
- * never chunked into the material pool.
+ * Stage B: reads the uploaded sample exam and stores its blueprint. The subject's newest
+ * blueprint is the active one, so uploading another sample replaces it. The sample exam's
+ * text is never chunked into the material pool. `subjectId` must already be checked as the
+ * user's (lib/ownership.ts).
  */
 export async function createBlueprint(
   userId: string,
+  subjectId: string,
   storagePath: string,
   filename: string,
   deadlineAt: number | undefined,
-  apiKey: ApiKey,
 ): Promise<{ blueprint: BlueprintRow; calls: CallMetrics[] }> {
   if (!isOwnedStoragePath(storagePath, userId, "sample")) {
     throw new IngestError("That storage path wasn't issued for your sample exam upload.", 400);
@@ -48,7 +48,6 @@ export async function createBlueprint(
       messages: [{ role: "user", content: blueprintPrompt(paperText, filename, schemaText(BlueprintSchema)) }],
       task: "blueprint",
       deadlineAt,
-      apiKey,
     },
     (blueprint) => blueprintIssues(blueprint, paperText),
   );
@@ -56,16 +55,17 @@ export async function createBlueprint(
   const { spec, sampleQuestions } = toStoredBlueprint(data);
   const [blueprint] = await db()
     .insert(blueprints)
-    .values({ userId, sourceFilename: filename, storagePath, spec, sampleQuestions })
+    .values({ userId, subjectId, sourceFilename: filename, storagePath, spec, sampleQuestions })
     .returning();
   return { blueprint, calls };
 }
 
-export async function activeBlueprint(userId: string): Promise<BlueprintRow | null> {
+/** The subject's active blueprint: its newest. */
+export async function activeBlueprint(subjectId: string): Promise<BlueprintRow | null> {
   const [latest] = await db()
     .select()
     .from(blueprints)
-    .where(eq(blueprints.userId, userId))
+    .where(eq(blueprints.subjectId, subjectId))
     .orderBy(desc(blueprints.createdAt))
     .limit(1);
   return latest ?? null;

@@ -15,7 +15,8 @@ export interface MaterialSummary {
   topics: string[];
 }
 
-export async function listMaterials(userId: string): Promise<MaterialSummary[]> {
+/** `subjectId` must already be checked as the signed-in user's (lib/ownership.ts). */
+export async function listMaterials(subjectId: string): Promise<MaterialSummary[]> {
   const rows = await db()
     .select({
       id: materials.id,
@@ -28,7 +29,7 @@ export async function listMaterials(userId: string): Promise<MaterialSummary[]> 
     })
     .from(materials)
     .leftJoin(chunks, eq(chunks.materialId, materials.id))
-    .where(eq(materials.userId, userId))
+    .where(eq(materials.subjectId, subjectId))
     .orderBy(desc(materials.createdAt), asc(chunks.ordinal));
 
   const byId = new Map<string, MaterialSummary>();
@@ -44,16 +45,16 @@ export async function listMaterials(userId: string): Promise<MaterialSummary[]> 
   return [...byId.values()];
 }
 
-export async function materialTotals(userId: string): Promise<{ chunks: number; topics: number; limit: number }> {
+export async function materialTotals(subjectId: string): Promise<{ chunks: number; topics: number; limit: number }> {
   const [{ total }] = await db()
     .select({ total: count() })
     .from(chunks)
     .innerJoin(materials, eq(chunks.materialId, materials.id))
-    .where(eq(materials.userId, userId));
+    .where(eq(materials.subjectId, subjectId));
   const topics = await db()
     .selectDistinct({ label: chunks.topicLabel })
     .from(chunks)
     .innerJoin(materials, eq(chunks.materialId, materials.id))
-    .where(and(eq(materials.userId, userId), isNotNull(chunks.topicLabel), ne(chunks.topicLabel, ADMIN_TOPIC)));
+    .where(and(eq(materials.subjectId, subjectId), isNotNull(chunks.topicLabel), ne(chunks.topicLabel, ADMIN_TOPIC)));
   return { chunks: total, topics: topics.length, limit: MAX_CHUNKS };
 }

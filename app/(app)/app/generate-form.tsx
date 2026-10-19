@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { ExamDifficulty } from "@/lib/generation/types";
 import { usePrefersReducedMotion } from "@/lib/motion";
+import { FreeMocksUsed } from "@/components/free-mocks-used";
 import { postJson } from "@/lib/upload-client";
 
 const COUNTS = [5, 10, 15, 20] as const;
@@ -21,8 +22,21 @@ const DIFFICULTIES: { level: ExamDifficulty; label: string; note: string }[] = [
 /** The lever gets this long to swing before the screen changes. Generation hasn't started yet. */
 const LEVER_MS = 420;
 
-/** Stakes and the lever: question count as poker chips, difficulty as a lever, then PULL. */
-export function GenerateForm({ ready, reason }: { ready: boolean; reason: string | null }) {
+/**
+ * Stakes and the lever: question count as poker chips, difficulty as a lever, then PULL.
+ * Each pull uses one of the account's free mocks; with none left, a note replaces the lever.
+ */
+export function GenerateForm({
+  subjectId,
+  ready,
+  reason,
+  freeMocksLeft,
+}: {
+  subjectId: string;
+  ready: boolean;
+  reason: string | null;
+  freeMocksLeft: number;
+}) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
   const [count, setCount] = useState<(typeof COUNTS)[number]>(10);
@@ -30,6 +44,7 @@ export function GenerateForm({ ready, reason }: { ready: boolean; reason: string
   const [pending, setPending] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usedUp, setUsedUp] = useState<string | null>(null);
   const position = DIFFICULTIES.findIndex((d) => d.level === difficulty);
 
   async function pull() {
@@ -37,17 +52,20 @@ export function GenerateForm({ ready, reason }: { ready: boolean; reason: string
     setPulling(true);
     setError(null);
     const [result] = await Promise.all([
-      postJson<{ examId: string }>("/api/exams", { questionCount: count, difficulty }),
+      postJson<{ examId: string }>("/api/exams", { subjectId, questionCount: count, difficulty }),
       new Promise((resolve) => setTimeout(resolve, reducedMotion ? 0 : LEVER_MS)),
     ]);
     setPulling(false);
     if (!result.ok) {
-      setError(result.error);
+      if (result.data.kind === "free_mocks_used") setUsedUp(result.error);
+      else setError(result.error);
       setPending(false);
       return;
     }
     router.push(`/spin/${result.data.examId}`);
   }
+
+  if (freeMocksLeft <= 0 || usedUp) return <FreeMocksUsed message={usedUp} />;
 
   return (
     <form
@@ -124,6 +142,9 @@ export function GenerateForm({ ready, reason }: { ready: boolean; reason: string
         </button>
         <p id="pull-help" className="max-w-[14rem] text-center text-sm text-dim">
           {ready ? `${count} questions, ${DIFFICULTIES[position].label.toLowerCase()} difficulty` : reason}
+        </p>
+        <p className="neon text-center text-lg font-bold">
+          {freeMocksLeft} free mock{freeMocksLeft === 1 ? "" : "s"} left
         </p>
         {error && (
           <p role="alert" className="max-w-xs text-center text-sm text-error">

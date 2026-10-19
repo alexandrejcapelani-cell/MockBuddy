@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ScoreChart, type ScorePoint } from "@/components/score-chart";
-import { serverEnv } from "@/lib/env";
+import { requireUser } from "@/lib/auth";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
 import { listHistory } from "@/lib/history";
 
@@ -11,13 +11,14 @@ const SHORT_DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "sh
 
 /** Every past mock: when, how big, how hard, the score once taken, and the weakest topic. */
 export default async function HistoryPage() {
-  const history = await listHistory(serverEnv("DEMO_USER_ID"));
+  const user = await requireUser();
+  const history = await listHistory(user.id);
   const taken = history.filter((row) => row.score !== null).reverse(); // oldest first for the chart
   const points: ScorePoint[] = taken.map((row) => ({
     id: row.examId,
     label: SHORT_DATE.format(row.createdAt),
     score: row.score!,
-    detail: `${row.generated} questions, ${DIFFICULTY_NAMES[row.difficulty].toLowerCase()}`,
+    detail: `${row.subject}: ${row.generated} questions, ${DIFFICULTY_NAMES[row.difficulty].toLowerCase()}`,
   }));
 
   return (
@@ -48,6 +49,7 @@ export default async function HistoryPage() {
                 <thead>
                   <tr className="border-b-2 border-gold/70 text-left text-gold-text">
                     <th scope="col" className="px-3 py-2">Date</th>
+                    <th scope="col" className="px-3 py-2">Subject</th>
                     <th scope="col" className="px-3 py-2 text-right">Questions</th>
                     <th scope="col" className="px-3 py-2">Difficulty</th>
                     <th scope="col" className="px-3 py-2 text-right">Score</th>
@@ -66,6 +68,7 @@ export default async function HistoryPage() {
                           {DATE.format(row.createdAt)}
                           {row.regenerated && <span className="block text-xs font-normal text-dim">regenerated</span>}
                         </th>
+                        <td className="px-3 py-2 [overflow-wrap:anywhere]">{row.subject}</td>
                         <td className="px-3 py-2 text-right tabular">
                           {row.generated === row.questionCount || row.status === "generating"
                             ? row.questionCount

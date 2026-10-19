@@ -3,32 +3,80 @@
 Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 [MOCKBUDDY_SPEC.md](../MOCKBUDDY_SPEC.md) disagree, this file wins.
 
-## Local-first development (2026-10-19)
+## Accounts, subjects and Supabase (CHANGES.md section 1, 2026-10-19)
 
-- MockBuddy runs locally for now. **Supabase, GitHub and Vercel are deferred until after
-  phase 5.** This replaces the earlier plan to deploy before phase 3 tuning.
-- Database: an embedded Postgres (PGlite) that `npm run dev` starts, persisted in
-  `.data/pglite`, with migrations applied on start. The app reaches it through the same
-  postgres-js driver and `DATABASE_URL` it will use for Supabase, so moving to Supabase is
-  setting `DATABASE_URL`.
-- File storage sits behind the `FileStorage` interface (`lib/storage/types.ts`). The local
-  adapter keeps files in `.data/uploads` and issues signed upload URLs to
-  `/api/local-upload`, a stand-in for Supabase Storage that only writes bytes to disk. The
-  browser flow is the same for both: get an upload target, PUT the bytes to it, send only
-  the storage path to the backend. Moving to Supabase Storage is adding
-  `lib/storage/supabase.ts` and changing the one line in `lib/storage/index.ts`.
-- The only environment variable is `GEMINI_API_KEY` (plus `GEMINI_TIER`, which defaults to
-  `free`). Everything else has a local default.
-- No `APP_PASSPHRASE` or middleware while local (see Access).
-- Each phase ends with build, typecheck, lint and tests passing and a local commit. There
-  are no deployment checks between phases.
-- **The 60 s serverless timeout must be validated on Vercel before deploying.** Nothing
-  enforces it locally, so every AI request logs its duration and warns when it passes
-  60 s. On Vercel (`VERCEL=1`) each request stops itself at 55 s with a retryable error.
-  Timings measured locally are indicative only. Known risks to check first: the blueprint
-  route can make two model calls in one request (its validation retry), and topic
-  labelling makes one call per 20 chunks in one request, so a very large file could need
-  splitting into separate requests.
+This replaces local-first development: MockBuddy is graded on its public Vercel URL by a
+bot that follows the grading contract in CLAUDE.md (copied verbatim from ASSIGNMENT.md;
+never weaken it). Where this section and older ones disagree, this one wins.
+
+- **Supabase** holds everything: Auth (email and password), Postgres, and Storage for
+  uploads. Local development points at the same Supabase project through `.env.local`;
+  the embedded PGlite database and the local file storage are gone. The schema is reset to
+  one migration (`drizzle/0000_supabase_schema.sql`); `supabase/setup.sql` (tables, RLS,
+  policies, the Storage bucket and its policies) is what gets pasted into the SQL Editor,
+  regenerated with `npm run db:generate && npm run db:setup-sql`.
+- **Environment.** Browser-visible, by design: `NEXT_PUBLIC_SUPABASE_URL` and
+  `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Server-only: `DATABASE_URL` (the Transaction
+  pooler string, which contains the database password) and `GEMINI_API_KEY`; optional
+  `GEMINI_TIER`. **The Supabase secret / service_role key is not used anywhere.**
+- **Routes.** `/` is public with one Sign up button. `/signup` and `/login` (email and
+  password, through `supabase.auth.signUp` / `signInWithPassword` in Server Actions) send
+  the user to `/app`. Everything else is behind a login: `middleware.ts` refreshes the
+  session on every request and redirects pages to `/login` / answers API routes with 401;
+  each page and route then checks the user again (`lib/auth.ts`, with `getClaims()`, never
+  `getSession()`). The logout button (`data-testid="logout"`) is in every header and on
+  the 404 page. `/signup` and `/login` stay usable while signed in (signing up replaces the
+  session), because the bot may sign up its second user in the same browser.
+- **The core item is a subject** (`core-input` → `core-submit` → a `core-item` chip on
+  `/app`). Saving one is a single database write in a Server Action: no upload, no AI call,
+  no other field. Names are trimmed, 1 to 80 characters, unique per user ignoring case
+  (adding an existing name opens it). Material, the sample exam, mocks and history all
+  belong to a subject; `/app?subject=<id>` shows one, defaulting to the newest.
+- **Privacy, two layers.** (1) RLS is on for all 8 tables, each with one policy: signed-in
+  users may SELECT their own rows (`user_id = auth.uid()`, or through the parent row).
+  Signed-out (anon) users read nothing; nobody can insert, update or delete through
+  Supabase's Data API, so the quota can't be bypassed there. Storage: one private bucket,
+  `uploads`, where users can add, read and delete only under `<their user id>/`.
+  `supabase/test/rls.test.ts` runs setup.sql on PGlite with Supabase emulated and checks
+  all of this. (2) The server connects as the table owner (RLS doesn't apply to it), so it
+  scopes every query to the signed-in user itself: `lib/ownership.ts` checks subjects and
+  exams by id, and someone else's id answers exactly like a missing one (404). Storage
+  calls use the signed-in user's session, so the Storage policies do apply to the server.
+  A stricter version (running server queries as the `authenticated` role with the user's
+  claims, so RLS covers them too) is possible later; it means wrapping every query.
+- **BYOK is removed.** The pasted-key field, `localStorage` key, header and all per-request
+  key plumbing are gone (the grading contract forbids AI keys in the frontend). The server
+  uses `GEMINI_API_KEY` only; errors are worded for students (a key problem is "on our
+  side"), with HTTP codes kept to the server log.
+- **Free-mock quota: 2 per account**, counting new and regenerated mocks
+  (`lib/generation/quota.ts`, `lib/free-mocks.ts`). Enforced on the server when a mock is
+  created, inside a transaction holding a per-user advisory lock, so parallel requests
+  can't both take the last one. A mock counts while it is generating and once it finished
+  with at least one question; one that ended with no questions doesn't use a free mock.
+  With none left, `/app` and the results page show a friendly note instead of the lever
+  and the Regenerate button; everything else keeps working. (CHANGES.md says "count
+  completed generations"; counting ones in progress too is what stops parallel starts
+  from getting past the limit.)
+- **Vercel limits.** Hobby with Fluid compute (on by default) allows 300 s per function,
+  so the AI routes export `maxDuration = 300` and stop themselves 10 s before it. The old
+  60 s worry is gone, though sequential batches still make a whole mock take minutes.
+- **The waitlist is removed** (table, route and form): with real sign-up it duplicated the
+  one Sign up button and held email addresses for no remaining purpose.
+- **Gemini terms, now directly relevant:** the deployed app calls Gemini with the owner's
+  key on behalf of other students. Google's terms allow only paid services for apps made
+  available to users in the EEA, Switzerland or the UK, so a free-tier key doesn't meet
+  them for classmates in Spain; and anyone can create accounts (no email confirmation), so
+  a paid key needs a budget cap in Google Cloud. See "Gemini terms" below.
+- **Verified** with a local stand-in for Supabase (PGlite with setup.sql applied, plus a
+  fake of Auth and Storage) and the fake Gemini server, following the bot's script: sign
+  up → `/app` → save a subject → it shows as a `core-item` → log out → wrong password
+  refused → right password → item still there → a second user (in the same browser) sees
+  nothing, and gets 404 from every page and API route for the first user's exam or subject
+  ids → signed out, every page redirects to `/login` and every API route answers 401. Also
+  uploads through signed Storage URLs, labelling, a blueprint, a full mock, the quota
+  (2nd mock allowed, 3rd and Regenerate refused with the note), and 375 px with no
+  sideways scrolling. **Not verified until the real project exists:** real Supabase Auth
+  and Storage behaviour, the publishable key against the Data API, Vercel.
 
 ## AI provider: Google Gemini (2026-10-19)
 
@@ -104,61 +152,19 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 
 - **Free-tier calls cost exactly $0 and the UI says "free tier"**, never a would-be dollar
   figure. The API doesn't say which plan a key is on, so `GEMINI_TIER` in `.env.local`
-  (`free` by default, or `paid`) says so for every call, pasted keys included. Limit, to
-  revisit with deployment: on a shared deployment the label follows the server's setting,
-  not each user's plan.
+  (`free` by default, or `paid`) says so for every call. Set it to `paid` on Vercel if the
+  deployed key has billing on.
 - On `paid`, costs come from Standard-tier list prices in `lib/ai/pricing.ts`, per million
   tokens: `gemini-3.8-flash` $0.75 in, $3.75 out, $0.075 cached input until 31 December
   2026, then double from 1 January 2027 (the file has both dated cards);
   `gemini-3.5-flash-lite` $0.30 in, $2.50 out, $0.03 cached. Thinking is billed at the
   output rate.
 
-## Bring your own key (BYOK)
-
-- **BYOK is the intended model for anyone else using MockBuddy, so the deployed app never
-  spends the owner's credits or quota.** On the deployment `GEMINI_API_KEY` stays unset: a
-  request without a pasted key then fails with "missing key" instead of falling back to the
-  owner's.
-- The app page (`/app`) has a key field for a Gemini API key from Google AI Studio. The key
-  is stored only in that browser's `localStorage` (`mockbuddy.geminiApiKey`), shown masked
-  (`…` plus the last 4 characters) with a Clear button. A key saved under the old
-  Anthropic name is deleted from the browser the first time the page loads.
-- **No key format checks.** Google's docs don't specify a key format, and it has changed:
-  AI Studio has issued auth keys since 28 May 2026 (the key in use here starts `AQ.`;
-  older keys started `AIza`). Any non-empty paste, trimmed, is accepted in the browser and passed on by
-  the server unchanged; Google's API decides whether it's valid. The SDK refuses one kind
-  itself, Live-API ephemeral tokens (`auth_tokens/…`), and that gets its own invalid-key
-  message.
-- The browser sends it in the `x-gemini-key` header, and only on requests that call the
-  model (material ingest, blueprint, generate, grading). Never in a URL or query string.
-  The SDK passes it on to Google in the `x-goog-api-key` header, not the URL.
-- The server uses it for that request's Gemini client only: a fresh client per call,
-  never cached. It is never stored, written to the database or logged; failure messages
-  name which key was used, never its value. The key is always passed explicitly, so the
-  SDK never falls back to a `GOOGLE_API_KEY` set in the shell.
-- Without the header the server falls back to `GEMINI_API_KEY` from `.env.local`, so
-  local runs keep using the owner's key without pasting anything.
-- Distinct failures, each with its own message and status:
-  - missing key (401);
-  - invalid key (401): whatever Google rejects (`API_KEY_INVALID`, a 401, a key blocked as
-    leaked, or a 403 such as an unrestricted standard key), with Google's own reason quoted
-    and the key cut out of it;
-  - quota exceeded (429): the day's free-tier requests are used up (reset at midnight
-    Pacific time), the model has no free quota (`limit: 0`), a spending cap was reached, or
-    the free tier isn't available in the user's region;
-  - rate limited (429, after the automatic backoff retries).
-- A key or quota problem doesn't fail a generation batch: the batch stays at its stage, so
-  after fixing the key, or once the quota resets, "Resume generation" carries on where it
-  stopped.
-- Known limits: `localStorage` is readable by any script running on the app's origin, so
-  the page must never load third-party scripts; and users must trust the deployment,
-  since their key passes through its server.
-
 ## Generation pipeline
 
 - Draft, critique and revise stay three separate model calls. Each runs in its own HTTP
   request (`/api/generate` with a `stage`), with the state between stages saved in the
-  database. Every AI route keeps `maxDuration = 60`.
+  database. Every AI route exports `maxDuration = 300`.
 - Batches of 5 run **one at a time** from the client by default, for free-tier rate limits
   (see Rate limits). `exams.plan` assigns every slot its type, section, marks and chunk(s)
   up front, so batches don't depend on each other and can run in parallel again with one
@@ -217,7 +223,7 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
   critique, revise, plus draft retries and top-ups), plus one blueprint per sample exam
   and one call per short or unreadable numerical answer. Topic labels use the lite model,
   which has its own quota.
-- Backoff never sleeps past the request's 60 s budget. If the next wait would overrun it,
+- Backoff never sleeps past the request's budget (290 s on Vercel). If the next wait would overrun it,
   the stage fails with a rate-limit error that includes the retry count, and the client
   can re-run that stage.
 - Each call logs one JSON line: exam id, batch, stage, attempts, 429 retries, total time
@@ -229,8 +235,8 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 - Under 60 s wall clock for a 20-question mock is a goal, not a constraint. Phase 3
   measures real timings (per stage, per batch and wall clock) and reports them. 90 s is
   acceptable; the architecture doesn't bend to hit 60 s.
-- The hard constraint is unchanged: each individual request finishes within
-  `maxDuration = 60`.
+- The hard constraint: each individual request finishes within its `maxDuration` (300 s
+  on Vercel Hobby with Fluid compute; see "Accounts, subjects and Supabase").
 - Running batches one at a time (the free-tier default) makes a mock's wall clock roughly
   the sum of its batches, so expect minutes rather than about one for 20 questions. That's
   accepted. Each request is still one model call, so the per-request limit is unaffected.
@@ -323,17 +329,15 @@ Each lands in its own reviewed migration when the phase that needs it starts.
   crosshair tooltip on hover and with the arrow keys, announced to screen readers. The
   table is the chart's table view.
 
-## Landing page and waitlist (phase 6)
+## Landing page (phase 6, updated in section 1)
 
-- `/` is the landing page: the pitch, a three-step "how it works", Start (to `/app`) and an
-  email-only waitlist. The app itself is at `/app`.
-- The `waitlist` table holds an email address and a timestamp, nothing else; one row per
-  address (normalized to lower case). The route replies the same way whether or not the
-  address was already listed, so it can't reveal who has signed up, and never logs
-  addresses. No accounts.
-- Before the landing page is public: add a privacy notice naming who holds the addresses
-  and how to have one deleted (GDPR), rate-limit the waitlist route, and have the
-  marketing copy reviewed.
+- `/` is the landing page: the pitch (now naming who it is for, university students
+  revising for an exam), a three-step "how it works", and one button, Sign up, which
+  becomes "Open the app" for a signed-in visitor. The app itself is at `/app`.
+- The waitlist is gone (see "Accounts, subjects and Supabase").
+- Before it is promoted: have the marketing copy reviewed, and add a privacy notice for
+  accounts (who holds the email addresses and uploaded material, why, and how to have them
+  deleted), since real classmates will sign up.
 
 ## Material ingestion
 
@@ -358,8 +362,7 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 
 ## Access
 
-- One shared passphrase from the `APP_PASSPHRASE` env var, checked in middleware. No
-  accounts. **Not built while MockBuddy runs locally; it lands before the first deploy.**
+- Supabase Auth accounts (email and password) replace the planned shared `APP_PASSPHRASE`.
 
 ## Design (phase 6)
 

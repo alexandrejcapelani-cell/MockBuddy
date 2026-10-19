@@ -1,7 +1,6 @@
 import "server-only";
 import { and, asc, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { type CallMetrics, ModelCallError } from "@/lib/ai/call";
-import type { ApiKey } from "@/lib/api-key";
 import { db } from "@/lib/db";
 import { chunks, materials } from "@/lib/db/schema";
 import { classifyUpload, isOwnedStoragePath, MAX_CHUNKS } from "@/lib/files";
@@ -25,13 +24,14 @@ export class IngestError extends Error {
   }
 }
 
-export async function createMaterial(userId: string, storagePath: string, filename: string): Promise<Material> {
+/** `subjectId` must already be checked as the user's (lib/ownership.ts). */
+export async function createMaterial(userId: string, subjectId: string, storagePath: string, filename: string): Promise<Material> {
   if (!isOwnedStoragePath(storagePath, userId, "material")) {
     throw new IngestError("That storage path wasn't issued for your material uploads.", 400);
   }
   const [material] = await db()
     .insert(materials)
-    .values({ userId, filename, storagePath, status: "uploaded" })
+    .values({ userId, subjectId, filename, storagePath, status: "uploaded" })
     .returning();
   return material;
 }
@@ -53,14 +53,13 @@ export async function getOwnedMaterial(userId: string, materialId: string): Prom
 export async function processMaterial(
   material: Material,
   deadlineAt: number | undefined,
-  apiKey: ApiKey,
 ): Promise<{ material: Material; calls: CallMetrics[] }> {
   if (material.status === "chunked") return { material, calls: [] };
   await setStatus(material.id, { status: "extracting", error: null });
   try {
     const [{ existing }] = await db().select({ existing: count() }).from(chunks).where(eq(chunks.materialId, material.id));
     if (existing === 0) await extractAndChunk(material);
-    const calls = await labelUnlabelledChunks(material, deadlineAt, apiKey);
+    const calls = await labelUnlabelledChunks(material, deadlineAt);
     return { material: await setStatus(material.id, { status: "chunked", error: null }), calls };
   } catch (error) {
     await setStatus(material.id, { status: "failed", error: failureReason(error) });
@@ -86,16 +85,16 @@ async function extractAndChunk(material: Material) {
   await insertChunksWithinCap(material, drafts, document.pageCount);
 }
 
-/** Inserts the chunks unless they would take the student's material past MAX_CHUNKS. */
+/** Inserts the chunks unless they would take the subject's material past MAX_CHUNKS. */
 async function insertChunksWithinCap(material: Material, drafts: ChunkDraft[], pageCount: number | null) {
   await db().transaction(async (tx) => {
-    // Serialises concurrent uploads by the same user so two files can't both pass the cap check.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${material.userId}))`);
+    // Serialises concurrent uploads to the same subject so two files can't both pass the cap check.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${material.subjectId}::text))`);
     const [{ total }] = await tx
       .select({ total: count() })
       .from(chunks)
       .innerJoin(materials, eq(chunks.materialId, materials.id))
-      .where(eq(materials.userId, material.userId));
+      .where(eq(materials.subjectId, material.subjectId));
     if (total + drafts.length > MAX_CHUNKS) {
       throw new IngestError(
         `${material.filename} would add ${drafts.length} chunks to your ${total}, past the ${MAX_CHUNKS}-chunk limit. ` +
@@ -116,7 +115,7 @@ async function insertChunksWithinCap(material: Material, drafts: ChunkDraft[], p
   });
 }
 
-async function labelUnlabelledChunks(material: Material, deadlineAt: number | undefined, apiKey: ApiKey): Promise<CallMetrics[]> {
+async function labelUnlabelledChunks(material: Material, deadlineAt: number | undefined): Promise<CallMetrics[]> {
   const unlabelled = await db()
     .select({ id: chunks.id, ordinal: chunks.ordinal, sectionLabel: chunks.sectionLabel, content: chunks.content })
     .from(chunks)
@@ -128,12 +127,12 @@ async function labelUnlabelledChunks(material: Material, deadlineAt: number | un
     .selectDistinct({ label: chunks.topicLabel })
     .from(chunks)
     .innerJoin(materials, eq(chunks.materialId, materials.id))
-    .where(and(eq(materials.userId, material.userId), isNotNull(chunks.topicLabel)));
+    .where(and(eq(materials.subjectId, material.subjectId), isNotNull(chunks.topicLabel)));
 
   const { labels, calls } = await labelTopics(
     unlabelled.map((chunk) => ({ index: chunk.ordinal, sectionLabel: chunk.sectionLabel, content: chunk.content })),
     existing.flatMap((row) => (row.label ? [row.label] : [])),
-    { materialId: material.id, deadlineAt, apiKey },
+    { materialId: material.id, deadlineAt },
   );
 
   await db().transaction(async (tx) => {

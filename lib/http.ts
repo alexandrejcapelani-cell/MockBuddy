@@ -2,11 +2,12 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ModelCallError, type ModelFailureKind } from "@/lib/ai/call";
-import { API_KEY_HEADER, type ApiKey } from "@/lib/api-key";
 import { ConfigError } from "@/lib/env";
+import { FreeMocksUsedError } from "@/lib/generation/quota";
 import { DocumentError } from "@/lib/ingest/extract";
 import { IngestError } from "@/lib/ingest/ingest";
 import { StorageNotFoundError } from "@/lib/storage";
+import { SupabaseConfigError } from "@/lib/supabase/config";
 
 // Shared request parsing and error responses for the API routes. Known failures become
 // a JSON { error } body with a fitting status; anything unexpected is rethrown so Next.js
@@ -16,22 +17,11 @@ export class RequestError extends Error {
   override name = "RequestError";
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409 | 413 | 415 | 422 = 400,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 = 400,
     readonly kind?: ModelFailureKind,
   ) {
     super(message);
   }
-}
-
-/**
- * The key for this request's model calls: the one pasted in the browser (sent in a header,
- * never in the URL), or the server's GEMINI_API_KEY when there is none. The value is
- * passed on to the Gemini client as sent, without judging its format: Google decides
- * whether it's valid. Never store or log it.
- */
-export function requestApiKey(request: Request): ApiKey {
-  const value = request.headers.get(API_KEY_HEADER)?.trim();
-  return value ? { source: "browser", value } : { source: "server" };
 }
 
 const STATUS_BY_KIND: Partial<Record<ModelFailureKind, number>> = {
@@ -70,7 +60,13 @@ export function errorResponse(error: unknown, extra: Record<string, unknown> = {
   if (error instanceof IngestError) return NextResponse.json({ error: error.message, ...extra }, { status: error.status });
   if (error instanceof DocumentError) return NextResponse.json({ error: error.message, ...extra }, { status: 422 });
   if (error instanceof StorageNotFoundError) return NextResponse.json({ error: error.message, ...extra }, { status: 404 });
-  if (error instanceof ConfigError) return NextResponse.json({ error: error.message, ...extra }, { status: 500 });
+  if (error instanceof FreeMocksUsedError) {
+    return NextResponse.json({ error: error.message, kind: "free_mocks_used", ...extra }, { status: 403 });
+  }
+  if (error instanceof ConfigError || error instanceof SupabaseConfigError) {
+    console.error(JSON.stringify({ event: "config_error", error: error.message }));
+    return NextResponse.json({ error: "MockBuddy isn't fully set up on this server yet. Try again later.", ...extra }, { status: 500 });
+  }
   if (error instanceof ModelCallError) {
     const status = STATUS_BY_KIND[error.kind] ?? (error.retryable ? 503 : 502);
     return NextResponse.json(

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
@@ -7,22 +7,33 @@ import {
   integer,
   jsonb,
   pgEnum,
+  pgPolicy,
   pgTable,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { authenticatedRole, authUsers } from "drizzle-orm/supabase";
 import type { DraftSlot, ExamPlan, SlotOutcome, SlotVerdict, StageMetrics } from "../generation/types";
 import type { RubricMark } from "../grading/types";
 import type { BlueprintSpec, OptionExplanation, RubricPoint, SampleQuestion } from "../schemas";
 
-// Data model from MOCKBUDDY_SPEC.md section 6.
+// Data model from MOCKBUDDY_SPEC.md section 6, with subjects (CHANGES.md 1.4) as the
+// container for everything a user makes.
 //
-// Row level security is enabled on every table with no policies, so Supabase's
-// public Data API (anon / authenticated roles) can read and write nothing. The
-// app connects as the `postgres` role through DATABASE_URL, which owns the
-// tables and is not subject to RLS.
+// Every row belongs to a Supabase Auth user: tables either have user_id (a foreign key
+// to auth.users, deleted with the user) or hang off a table that does.
+//
+// Row level security is on for every table. Each has one policy: a signed-in user may
+// SELECT their own rows (user_id = auth.uid(), directly or through the parent row).
+// Nobody else, and nobody signed out (the anon role), can read anything through
+// Supabase's public Data API, and nobody can write through it at all: every write goes
+// through the app's server, so rules like the free-mock quota can't be skipped.
+//
+// The server connects as the `postgres` role through DATABASE_URL. That role owns the
+// tables, so RLS doesn't apply to it; the server scopes every query to the signed-in
+// user itself (lib/auth.ts, lib/ownership.ts).
 //
 // jsonb column types come from the Zod schemas in lib/schemas.ts.
 
@@ -36,12 +47,40 @@ export const batchStage = pgEnum("batch_stage", ["draft", "draft_retry", "critiq
 
 const id = () => uuid("id").primaryKey().defaultRandom();
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+const userId = () =>
+  uuid("user_id")
+    .notNull()
+    .references(() => authUsers.id, { onDelete: "cascade" });
+
+/** Signed-in users can read their own rows, and only those. */
+const readOwnRows = (name: string, ownership: SQL) => pgPolicy(name, { for: "select", to: authenticatedRole, using: ownership });
+const OWN_ROW = sql`user_id = (select auth.uid())`;
+const ownedThrough = (parent: "materials" | "exams", foreignKey: string) =>
+  sql.raw(`exists (select 1 from public.${parent} p where p.id = ${foreignKey} and p.user_id = (select auth.uid()))`);
+
+/** A subject (e.g. "Econometrics"): its material, sample exam, mocks and history belong to it. */
+export const subjects = pgTable(
+  "subjects",
+  {
+    id: id(),
+    userId: userId(),
+    name: text("name").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("subjects_user_name_idx").on(t.userId, sql`lower(${t.name})`),
+    readOwnRows("subjects_select_own", OWN_ROW),
+  ],
+);
 
 export const materials = pgTable(
   "materials",
   {
     id: id(),
-    userId: text("user_id").notNull(),
+    userId: userId(),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subjects.id, { onDelete: "cascade" }),
     filename: text("filename").notNull(),
     storagePath: text("storage_path").notNull(),
     pageCount: integer("page_count"),
@@ -50,8 +89,8 @@ export const materials = pgTable(
     error: text("error"),
     createdAt: createdAt(),
   },
-  (t) => [index("materials_user_id_idx").on(t.userId)],
-).enableRLS();
+  (t) => [index("materials_subject_id_idx").on(t.subjectId), readOwnRows("materials_select_own", OWN_ROW)],
+);
 
 export const chunks = pgTable(
   "chunks",
@@ -67,14 +106,20 @@ export const chunks = pgTable(
     tokenEstimate: integer("token_estimate").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("chunks_material_ordinal_idx").on(t.materialId, t.ordinal)],
-).enableRLS();
+  (t) => [
+    uniqueIndex("chunks_material_ordinal_idx").on(t.materialId, t.ordinal),
+    readOwnRows("chunks_select_own", ownedThrough("materials", "material_id")),
+  ],
+);
 
 export const blueprints = pgTable(
   "blueprints",
   {
     id: id(),
-    userId: text("user_id").notNull(),
+    userId: userId(),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subjects.id, { onDelete: "cascade" }),
     sourceFilename: text("source_filename").notNull(),
     /** Where the uploaded sample exam is stored. It is never chunked into the material pool. */
     storagePath: text("storage_path").notNull(),
@@ -83,13 +128,17 @@ export const blueprints = pgTable(
     sampleQuestions: jsonb("sample_questions").$type<SampleQuestion[]>().notNull(),
     createdAt: createdAt(),
   },
-  (t) => [index("blueprints_user_created_idx").on(t.userId, t.createdAt)],
-).enableRLS();
+  (t) => [index("blueprints_subject_created_idx").on(t.subjectId, t.createdAt), readOwnRows("blueprints_select_own", OWN_ROW)],
+);
 
 export const exams = pgTable(
   "exams",
   {
     id: id(),
+    userId: userId(),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subjects.id, { onDelete: "cascade" }),
     blueprintId: uuid("blueprint_id")
       .notNull()
       .references(() => blueprints.id, { onDelete: "cascade" }),
@@ -106,8 +155,12 @@ export const exams = pgTable(
     plan: jsonb("plan").$type<ExamPlan>().notNull(),
     createdAt: createdAt(),
   },
-  (t) => [index("exams_blueprint_id_idx").on(t.blueprintId)],
-).enableRLS();
+  (t) => [
+    index("exams_user_created_idx").on(t.userId, t.createdAt),
+    index("exams_subject_id_idx").on(t.subjectId),
+    readOwnRows("exams_select_own", OWN_ROW),
+  ],
+);
 
 /**
  * One batch of up to 5 slots moving through draft → critique → revise. Each stage runs in
@@ -136,8 +189,11 @@ export const generationBatches = pgTable(
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("generation_batches_exam_batch_idx").on(t.examId, t.batchIndex)],
-).enableRLS();
+  (t) => [
+    uniqueIndex("generation_batches_exam_batch_idx").on(t.examId, t.batchIndex),
+    readOwnRows("generation_batches_select_own", ownedThrough("exams", "exam_id")),
+  ],
+);
 
 export const questions = pgTable(
   "questions",
@@ -168,8 +224,11 @@ export const questions = pgTable(
     topicLabel: text("topic_label").notNull(),
     difficulty: questionDifficulty("difficulty").notNull(),
   },
-  (t) => [uniqueIndex("questions_exam_ordinal_idx").on(t.examId, t.ordinal)],
-).enableRLS();
+  (t) => [
+    uniqueIndex("questions_exam_ordinal_idx").on(t.examId, t.ordinal),
+    readOwnRows("questions_select_own", ownedThrough("exams", "exam_id")),
+  ],
+);
 
 export const answers = pgTable(
   "answers",
@@ -190,19 +249,9 @@ export const answers = pgTable(
     answeredAt: timestamp("answered_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // One answer per question: answering reveals the verdict, so there is no re-answer.
-  (t) => [uniqueIndex("answers_question_id_idx").on(t.questionId), index("answers_exam_id_idx").on(t.examId)],
-).enableRLS();
-
-/**
- * Landing-page waitlist: an email address and when it was added, nothing else. No
- * accounts; one row per address.
- */
-export const waitlist = pgTable(
-  "waitlist",
-  {
-    id: id(),
-    email: text("email").notNull(),
-    createdAt: createdAt(),
-  },
-  (t) => [uniqueIndex("waitlist_email_idx").on(t.email)],
-).enableRLS();
+  (t) => [
+    uniqueIndex("answers_question_id_idx").on(t.questionId),
+    index("answers_exam_id_idx").on(t.examId),
+    readOwnRows("answers_select_own", ownedThrough("exams", "exam_id")),
+  ],
+);
