@@ -41,6 +41,8 @@ export const materials = pgTable(
     storagePath: text("storage_path").notNull(),
     pageCount: integer("page_count"),
     status: materialStatus("status").notNull().default("uploaded"),
+    /** Why processing failed, worded for the student; null unless status is "failed". */
+    error: text("error"),
     createdAt: createdAt(),
   },
   (t) => [index("materials_user_id_idx").on(t.userId)],
@@ -148,11 +150,3 @@ export const answers = pgTable(
   // One answer per question: answering reveals the verdict, so there is no re-answer.
   (t) => [uniqueIndex("answers_question_id_idx").on(t.questionId), index("answers_exam_id_idx").on(t.examId)],
 ).enableRLS();
-
-// Phase 0 connectivity check only: the home page writes and reads these rows.
-export const pings = pgTable("pings", {
-  id: id(),
-  userId: text("user_id").notNull(),
-  note: text("note").notNull(),
-  createdAt: createdAt(),
-}).enableRLS();

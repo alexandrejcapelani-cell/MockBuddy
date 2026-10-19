@@ -117,7 +117,9 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 ## Material ingestion
 
 - Headings are preferred break points; consecutive pages merge up to about 2,500 tokens
-  with about 300 tokens of overlap.
+  with about 300 tokens of overlap. A new heading starts a new chunk once the current one
+  holds about 600 tokens (changed during phase 1: slides are sparse, and merging all the
+  way to 2,500 left a whole deck as one or two chunks with a single topic label).
 - Topic labelling runs in batches of about 20 chunks per call and is given the existing
   labels so it reuses them.
 - Scanned PDFs (almost no text layer) fail with a clear message. No OCR in v1.

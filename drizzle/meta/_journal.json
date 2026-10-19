@@ -8,6 +8,13 @@
       "when": 1792346327871,
       "tag": "0000_initial_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792402121991,
+      "tag": "0001_phase1_ingestion",
+      "breakpoints": true
     }
   ]
 }

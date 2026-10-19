@@ -1,78 +1,72 @@
-import { desc, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { describeDbError } from "@/lib/db/errors";
-import { pings } from "@/lib/db/schema";
+import Link from "next/link";
 import { serverEnv } from "@/lib/env";
-import { PingForm } from "./ping-form";
+import { listMaterials, materialTotals } from "@/lib/materials";
+import { MaterialActions } from "./material-actions";
+import { MaterialUploader } from "./material-uploader";
 
-// Reads the database on every request; never prerendered at build time.
+// Plain UI until phase 6 brings the casino table.
 export const dynamic = "force-dynamic";
 
-async function loadPings() {
-  const started = performance.now();
-  const rows = await db()
-    .select()
-    .from(pings)
-    .where(eq(pings.userId, serverEnv("DEMO_USER_ID")))
-    .orderBy(desc(pings.createdAt))
-    .limit(10);
-  return { rows, ms: Math.round(performance.now() - started) };
-}
-
-/** host:port of DATABASE_URL, never the credentials. Shows which pooler is in use. */
-function databaseEndpoint(): string | null {
-  const url = process.env.DATABASE_URL;
-  if (!url || !URL.canParse(url)) return null;
-  const { hostname, port } = new URL(url);
-  return `${hostname}:${port || "5432"}`;
-}
-
-export default async function Home() {
-  const result = await loadPings().then(
-    (data) => ({ ok: true as const, ...data }),
-    (error: unknown) => {
-      console.error("Reading pings failed", error);
-      return { ok: false as const, message: describeDbError(error) };
-    },
-  );
-  const endpoint = databaseEndpoint();
+export default async function TablePage() {
+  const userId = serverEnv("DEMO_USER_ID");
+  const [materials, totals] = await Promise.all([listMaterials(userId), materialTotals(userId)]);
 
   return (
-    <main className="mx-auto max-w-xl space-y-8 p-6">
+    <main className="mx-auto max-w-3xl space-y-10 p-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">MockBuddy</h1>
-        <p className="text-sm text-muted-foreground">Phase 0: database round-trip check</p>
-        {endpoint && <p className="font-mono text-xs text-muted-foreground">Database: {endpoint}</p>}
+        <p className="text-sm text-muted-foreground">Practice exams from your own course material.</p>
       </header>
 
-      <PingForm />
-
-      <section aria-labelledby="rows-heading" className="space-y-2">
-        <h2 id="rows-heading" className="font-medium">
-          Latest rows
+      <section aria-labelledby="material-heading" className="space-y-4">
+        <h2 id="material-heading" className="text-lg font-semibold">
+          Your material
         </h2>
-        {!result.ok ? (
-          <p role="alert" className="text-sm text-destructive">
-            Could not read from the database: {result.message}
-          </p>
-        ) : result.rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No rows yet. Write one above.</p>
+        <MaterialUploader />
+        {materials.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No material yet.</p>
         ) : (
-          <>
-            <ul className="divide-y rounded-lg border text-sm">
-              {result.rows.map((row) => (
-                <li key={row.id} className="flex justify-between gap-4 px-3 py-2">
-                  <span className="break-all">{row.note}</span>
-                  <time dateTime={row.createdAt.toISOString()} className="shrink-0 text-muted-foreground tabular-nums">
-                    {row.createdAt.toISOString().replace("T", " ").slice(0, 19)} UTC
-                  </time>
-                </li>
-              ))}
-            </ul>
-            <p className="text-xs text-muted-foreground">Read in {result.ms} ms.</p>
-          </>
+          <ul className="divide-y rounded-lg border text-sm">
+            {materials.map((material) => (
+              <li key={material.id} className="space-y-1 px-3 py-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium break-all">{material.filename}</span>
+                  <MaterialActions id={material.id} filename={material.filename} failed={material.status === "failed"} />
+                </div>
+                <p className="text-muted-foreground">
+                  {material.pageCount !== null && `${material.pageCount} pages · `}
+                  {material.chunkCount} chunks · {statusText(material.status)}
+                </p>
+                {material.error && (
+                  <p role="alert" className="text-destructive">
+                    {material.error}
+                  </p>
+                )}
+                {material.topics.length > 0 && <p>Topics: {material.topics.join(" · ")}</p>}
+              </li>
+            ))}
+          </ul>
         )}
+        <p className="text-sm">
+          {totals.topics} topics detected · {totals.chunks} of {totals.limit} chunks used ·{" "}
+          <Link href="/debug/chunks" className="underline">
+            Inspect chunks
+          </Link>
+        </p>
       </section>
     </main>
   );
+}
+
+function statusText(status: string): string {
+  switch (status) {
+    case "chunked":
+      return "ready";
+    case "extracting":
+      return "processing…";
+    case "failed":
+      return "failed";
+    default:
+      return "uploaded, not processed yet";
+  }
 }
