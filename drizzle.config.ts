@@ -1,20 +1,16 @@
 import { loadEnvConfig } from "@next/env";
 import { defineConfig } from "drizzle-kit";
+import { LOCAL_DATABASE_URL } from "./lib/local-db";
 
-// Load .env.local the same way Next.js does, so drizzle-kit sees DATABASE_URL.
+// Load .env.local the same way Next.js does. Without DATABASE_URL, drizzle-kit talks to
+// the embedded database that `npm run dev` serves (which also applies migrations itself).
 loadEnvConfig(process.cwd());
-
-const url = process.env.DATABASE_URL;
-const generating = process.argv.includes("generate");
-if (!url && !generating) {
-  throw new Error("DATABASE_URL is not set. Copy .env.example to .env.local and fill it in.");
-}
 
 export default defineConfig({
   schema: "./lib/db/schema.ts",
   out: "./drizzle",
   dialect: "postgresql",
-  dbCredentials: { url: url ?? "" },
+  dbCredentials: { url: process.env.DATABASE_URL || LOCAL_DATABASE_URL },
   strict: true,
   verbose: true,
 });

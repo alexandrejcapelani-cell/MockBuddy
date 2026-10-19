@@ -43,7 +43,9 @@ function hintFor(message: string, code: string | undefined): string | undefined 
     case "CONNECT_TIMEOUT":
     case "ETIMEDOUT":
     case "ECONNREFUSED":
-      return "could not open a connection: check the host and port in DATABASE_URL, and that the Supabase project is not paused";
+      return process.env.NODE_ENV === "production"
+        ? "could not open a connection: check the host and port in DATABASE_URL, and that the Supabase project is not paused"
+        : "could not reach the local database: start the app with `npm run dev`, which starts the database too";
   }
   if (/prepared statement/i.test(message)) {
     return "the transaction pooler rejected a prepared statement: the client must be created with prepare: false";

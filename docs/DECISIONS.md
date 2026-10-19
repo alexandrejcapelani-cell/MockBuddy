@@ -1,20 +1,30 @@
 # Decisions
 
-Agreed on 2026-10-18 after the spec review. Where this file and
+Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 [MOCKBUDDY_SPEC.md](../MOCKBUDDY_SPEC.md) disagree, this file wins.
 
-## Deployment and phase gates
+## Local-first development (2026-10-19)
 
-- Until GitHub and Vercel are set up, each phase is verified locally and committed locally.
-- Phase 0 is green, locally, when:
-  - `npm run dev` serves the app with `.env.local` pointing at the real Supabase project;
-  - the home page shows the Supabase pooler host, not a missing-variable error;
-  - a row written on the home page reads back from the real Supabase database (not PGlite);
-  - the Supabase Table Editor shows all 7 tables with RLS enabled;
-  - `npm run build`, `npm run lint` and `npm run typecheck` pass.
-- GitHub and Vercel deployment must be done before Phase 3 tuning. The 60-second
-  serverless timeout doesn't exist locally, so the generation pipeline (batch timing,
-  parallelism, effort levels) can't be sized without measuring it on Vercel.
+- MockBuddy runs locally for now. **Supabase, GitHub and Vercel are deferred until after
+  phase 5.** This replaces the earlier plan to deploy before phase 3 tuning.
+- Database: an embedded Postgres (PGlite) that `npm run dev` starts, persisted in
+  `.data/pglite`, with migrations applied on start. The app reaches it through the same
+  postgres-js driver and `DATABASE_URL` it will use for Supabase, so moving to Supabase is
+  setting `DATABASE_URL`.
+- File storage sits behind the `FileStorage` interface (`lib/storage/types.ts`). The local
+  adapter keeps files in `.data/uploads` and issues signed upload URLs to
+  `/api/local-upload`, a stand-in for Supabase Storage that only writes bytes to disk. The
+  browser flow is the same for both: get an upload target, PUT the bytes to it, send only
+  the storage path to the backend. Moving to Supabase Storage is adding
+  `lib/storage/supabase.ts` and changing the one line in `lib/storage/index.ts`.
+- The only environment variable is `ANTHROPIC_API_KEY`. Everything else has a local default.
+- No `APP_PASSPHRASE` or middleware while local (see Access).
+- Each phase ends with build, typecheck, lint and tests passing and a local commit. There
+  are no deployment checks between phases.
+- **The 60 s serverless timeout must be validated on Vercel before deploying.** Nothing
+  enforces it locally, so every AI request logs its duration and warns when it passes
+  60 s. On Vercel (`VERCEL=1`) each request stops itself at 55 s with a retryable error.
+  Timings measured locally are indicative only.
 
 ## Generation pipeline
 
@@ -126,7 +136,7 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 ## Access
 
 - One shared passphrase from the `APP_PASSPHRASE` env var, checked in middleware. No
-  accounts.
+  accounts. **Not built while MockBuddy runs locally; it lands before the first deploy.**
 
 ## Design (phase 6)
 
