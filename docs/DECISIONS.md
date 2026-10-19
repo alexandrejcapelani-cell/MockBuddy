@@ -24,7 +24,10 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 - **The 60 s serverless timeout must be validated on Vercel before deploying.** Nothing
   enforces it locally, so every AI request logs its duration and warns when it passes
   60 s. On Vercel (`VERCEL=1`) each request stops itself at 55 s with a retryable error.
-  Timings measured locally are indicative only.
+  Timings measured locally are indicative only. Known risks to check first: the blueprint
+  route can make two model calls in one request (its validation retry), and topic
+  labelling makes one call per 20 chunks in one request, so a very large file could need
+  splitting into separate requests.
 
 ## Generation pipeline
 
