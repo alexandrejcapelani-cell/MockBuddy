@@ -63,7 +63,8 @@ export default async function ChunksPage() {
       {files.map((fileRows) => (
         <section key={fileRows[0].materialId} className="space-y-2">
           <h2 className="text-lg font-semibold break-all">{fileRows[0].filename}</h2>
-          <table className="w-full border-collapse">
+          <div className="relative overflow-x-auto">
+            <table className="w-full border-collapse">
             <thead>
               <tr className="border-b text-left">
                 <th className="py-1 pr-3">#</th>
@@ -90,6 +91,7 @@ export default async function ChunksPage() {
               ))}
             </tbody>
           </table>
+            </div>
         </section>
       ))}
     </main>

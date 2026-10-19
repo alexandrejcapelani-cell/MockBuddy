@@ -64,7 +64,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ examId
         <h2 id="topics-heading" className="text-2xl font-semibold">
           The board
         </h2>
-        <div className="overflow-x-auto rounded-2xl border-2 border-gold/70 bg-felt">
+        <div className="relative overflow-x-auto rounded-2xl border-2 border-gold/70 bg-felt">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b-2 border-gold/70 text-left text-gold-text">

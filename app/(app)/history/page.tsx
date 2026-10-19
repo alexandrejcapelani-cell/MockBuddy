@@ -43,7 +43,7 @@ export default async function HistoryPage() {
             <h2 id="history-heading" className="sr-only">
               All mocks
             </h2>
-            <div className="overflow-x-auto rounded-2xl border-2 border-gold/70 bg-felt">
+            <div className="relative overflow-x-auto rounded-2xl border-2 border-gold/70 bg-felt">
               <table id="history-table" className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b-2 border-gold/70 text-left text-gold-text">

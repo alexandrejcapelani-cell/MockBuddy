@@ -174,6 +174,7 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
         {(Math.max(0, ...metrics.map((m) => m.durationMs)) / 1000).toFixed(1)} s (Vercel allows 60 s per request). Estimated cost
         of this run: {formatUsd(cost(metrics))}.
       </p>
+      <div className="relative overflow-x-auto">
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b text-left">
@@ -207,6 +208,8 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
           })}
         </tbody>
       </table>
+      </div>
+      <div className="relative overflow-x-auto">
       <table className="w-full border-collapse">
         <caption className="mb-1 text-left font-medium">By model</caption>
         <thead>
@@ -235,6 +238,7 @@ function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { ba
           })}
         </tbody>
       </table>
+      </div>
       <p className="text-muted-foreground">
         Costs are estimates from list prices (lib/ai/pricing.ts). Topic labelling and blueprint calls are not part of a
         run; their model, time and cost show when each upload finishes, and in the server log.

@@ -192,3 +192,17 @@ export const answers = pgTable(
   // One answer per question: answering reveals the verdict, so there is no re-answer.
   (t) => [uniqueIndex("answers_question_id_idx").on(t.questionId), index("answers_exam_id_idx").on(t.examId)],
 ).enableRLS();
+
+/**
+ * Landing-page waitlist: an email address and when it was added, nothing else. No
+ * accounts; one row per address.
+ */
+export const waitlist = pgTable(
+  "waitlist",
+  {
+    id: id(),
+    email: text("email").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("waitlist_email_idx").on(t.email)],
+).enableRLS();

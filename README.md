@@ -31,7 +31,8 @@ cp .env.example .env.local   # then put your key after ANTHROPIC_API_KEY=
 npm run dev
 ```
 
-Open http://localhost:3000. Instead of (or as well as) `.env.local`, you can paste a key
+Open http://localhost:3000 for the landing page, or go straight to the app at
+http://localhost:3000/app. Instead of (or as well as) `.env.local`, you can paste a key
 in the API key field on the home page: it is kept only in that browser and takes precedence
 for that browser's requests (see "Bring your own key" in docs/DECISIONS.md).
 

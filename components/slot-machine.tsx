@@ -39,7 +39,7 @@ function StaticMachine({ locked, landOn, progress, jackpot }: Props) {
       <div className="grid grid-cols-3 gap-3">
         {landOn.map((label, i) => (
           <div key={i} className="flex h-24 items-center justify-center rounded-xl bg-chip-cream px-2 text-center text-card-ink">
-            <span className="font-display text-lg font-bold">{i < locked || jackpot ? label : "…"}</span>
+            <span className="font-display text-base font-bold [overflow-wrap:anywhere] hyphens-auto sm:text-lg">{i < locked || jackpot ? label : "…"}</span>
           </div>
         ))}
       </div>
@@ -129,7 +129,7 @@ function SpinningMachine({ topics, locked, landOn, progress, jackpot }: Props) {
             ref={(el) => {
               windowRefs.current[i] = el;
             }}
-            className="reel-window relative overflow-hidden rounded-xl bg-chip-cream"
+            className="reel-window relative min-w-0 overflow-hidden rounded-xl bg-chip-cream"
             style={{ height: ROW * 3 }}
             aria-hidden="true"
           >
@@ -141,7 +141,7 @@ function SpinningMachine({ topics, locked, landOn, progress, jackpot }: Props) {
             >
               {[...labels, ...labels].map((label, j) => (
                 <div key={j} className="flex items-center justify-center px-2 text-center" style={{ height: ROW }}>
-                  <span className="font-display text-base leading-tight font-bold text-card-ink sm:text-lg">{label}</span>
+                  <span className="font-display text-sm leading-tight font-bold [overflow-wrap:anywhere] hyphens-auto text-card-ink sm:text-lg">{label}</span>
                 </div>
               ))}
             </div>

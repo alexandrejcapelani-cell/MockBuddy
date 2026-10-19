@@ -46,6 +46,7 @@ export default async function BlueprintPage() {
             <h2 id="sections-heading" className="text-lg font-semibold">
               Sections
             </h2>
+            <div className="relative overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b text-left">
@@ -70,6 +71,7 @@ export default async function BlueprintPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </section>
 
           <section aria-labelledby="samples-heading" className="space-y-2">

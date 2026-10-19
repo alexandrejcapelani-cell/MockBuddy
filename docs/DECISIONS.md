@@ -229,6 +229,18 @@ Each lands in its own reviewed migration when the phase that needs it starts.
   crosshair tooltip on hover and with the arrow keys, announced to screen readers. The
   table is the chart's table view.
 
+## Landing page and waitlist (phase 6)
+
+- `/` is the landing page: the pitch, a three-step "how it works", Start (to `/app`) and an
+  email-only waitlist. The app itself is at `/app`.
+- The `waitlist` table holds an email address and a timestamp, nothing else; one row per
+  address (normalized to lower case). The route replies the same way whether or not the
+  address was already listed, so it can't reveal who has signed up, and never logs
+  addresses. No accounts.
+- Before the landing page is public: add a privacy notice naming who holds the addresses
+  and how to have one deleted (GDPR), rate-limit the waitlist route, and have the
+  marketing copy reviewed.
+
 ## Material ingestion
 
 - Headings are preferred break points; consecutive pages merge up to about 2,500 tokens
