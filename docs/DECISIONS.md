@@ -218,6 +218,17 @@ Each lands in its own reviewed migration when the phase that needs it starts.
   own `used_chunk_ids` starts empty. Generation then runs on the generation page like any
   other mock.
 
+## History (phase 6)
+
+- `/history` lists every mock for the user, newest first: date, question count (and how
+  many survived generation), difficulty, score once at least one question is answered,
+  and the weakest (COLD) topic. Each row opens the results page (or the spin page while
+  still generating). This replaces the spec's "no saved exam history" in v1.
+- With two or more taken mocks, a single-series line chart shows score over time: gold
+  line and ringed markers on a hairline grid, the latest value labelled directly, a
+  crosshair tooltip on hover and with the arrow keys, announced to screen readers. The
+  table is the chart's table view.
+
 ## Material ingestion
 
 - Headings are preferred break points; consecutive pages merge up to about 2,500 tokens
