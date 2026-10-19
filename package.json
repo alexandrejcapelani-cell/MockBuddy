@@ -13,7 +13,8 @@
     "db:studio": "drizzle-kit studio",
     "dev:next": "next dev --turbopack",
     "db:reset": "rm -rf .data/pglite",
-    "test": "node --test 'lib/**/*.test.ts'"
+    "test": "node --test 'lib/**/*.test.ts'",
+    "db:seed-demo": "node scripts/seed-demo.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

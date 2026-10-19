@@ -111,3 +111,26 @@ export const CritiqueSchema = z.object({
 });
 export type Critique = z.infer<typeof CritiqueSchema>;
 export type CritiqueVerdict = Critique["verdicts"][number];
+
+// ---------------------------------------------------------------- marking (stage D)
+
+/** Short-answer marking: marks per rubric point, in rubric order. */
+export const ShortAnswerGradeSchema = z.object({
+  points: z.array(
+    z.object({
+      index: z.number().int(),
+      awarded: z.number(),
+      reason: z.string(),
+    }),
+  ),
+  feedback: z.string(),
+});
+export type ShortAnswerGrade = z.infer<typeof ShortAnswerGradeSchema>;
+
+/** Numerical answers the parser couldn't read: does the response state the right quantity? */
+export const NumericJudgementSchema = z.object({
+  is_correct: z.boolean(),
+  understood_value: z.number().nullable(),
+  feedback: z.string(),
+});
+export type NumericJudgement = z.infer<typeof NumericJudgementSchema>;

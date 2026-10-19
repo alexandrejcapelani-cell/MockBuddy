@@ -181,6 +181,27 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 - Short and numerical answers are graded as soon as they're submitted, one call per
   answer, with a "marking…" state.
 
+### How marking works (implemented in phase 4)
+
+- One route, `POST /api/grade`, marks every answer type. MCQ and numbers the parser can
+  read never call the model; short answers, and numbers it can't read, make one call
+  (Sonnet 5.5, the `grading` task), plus one retry if the marking comes back malformed.
+- Numbers: a decimal comma is accepted ("2,4"). "1,234" is ambiguous (1234 or 1.234), so
+  both readings are tried and either can be right. Anything with no number or several
+  numbers ("b1 = 2.4", "two point four") goes to the model to judge.
+- Short answers: marks per rubric point, generous by instruction. A short answer counts
+  as correct (gold in the navigator) at half marks or more; anything between 0 and full
+  marks is labelled "Partly right" or "Mostly right" with the marks in words.
+- `answers.rubric_marks` (jsonb) stores the marks and reason per rubric point, so the
+  verdict can show them. It is an addition to the spec's data model.
+- Answering is final: a second submission returns the stored answer unchanged.
+- The answer key and every explanation stay on the server until a question is answered:
+  the exam page's data for an unanswered question has the prompt and options only.
+- Verdicts are given in words ("✓ Correct: 2 of 2 marks", "✗ Wrong: 0 of 2 marks. The
+  correct answer is B.") in an `aria-live` region and in the navigator buttons' names, so
+  they never depend on colour.
+- The win sound, chip cascade and card flip belong to the casino theme (phase 6).
+
 ## Material ingestion
 
 - Headings are preferred break points; consecutive pages merge up to about 2,500 tokens

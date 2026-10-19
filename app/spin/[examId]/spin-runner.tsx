@@ -140,10 +140,13 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
         {MAX_PARALLEL_BATCHES} batches at once
       </p>
 
-      {phase === "done" && (
-        <p>
-          <Link href={`/debug/exam/${initial.examId}`} className="font-medium underline">
-            Review the questions and explanations
+      {phase === "done" && result && result.generated > 0 && (
+        <p className="flex flex-wrap gap-4">
+          <Link href={`/exam/${initial.examId}`} className="font-medium underline">
+            Take the exam
+          </Link>
+          <Link href={`/debug/exam/${initial.examId}`} className="underline">
+            Review every question and answer (spoilers)
           </Link>
         </p>
       )}

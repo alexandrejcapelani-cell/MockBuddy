@@ -14,6 +14,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { DraftSlot, ExamPlan, SlotOutcome, SlotVerdict, StageMetrics } from "../generation/types";
+import type { RubricMark } from "../grading/types";
 import type { BlueprintSpec, OptionExplanation, RubricPoint, SampleQuestion } from "../schemas";
 
 // Data model from MOCKBUDDY_SPEC.md section 6.
@@ -184,6 +185,8 @@ export const answers = pgTable(
     isCorrect: boolean("is_correct").notNull(),
     awardedMarks: doublePrecision("awarded_marks").notNull(),
     feedback: text("feedback"),
+    /** For short answers: the marks awarded per rubric point, with the marker's reason. */
+    rubricMarks: jsonb("rubric_marks").$type<RubricMark[]>(),
     answeredAt: timestamp("answered_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // One answer per question: answering reveals the verdict, so there is no re-answer.
