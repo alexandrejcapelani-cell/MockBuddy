@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SlotMachine } from "@/components/slot-machine";
 import { BATCH_MODE, PARALLEL_BATCHES } from "@/lib/ai/config";
 import { formatCost } from "@/lib/ai/pricing";
 import type { BatchView, ExamProgress } from "@/lib/generation/context";
-import { type GenerationResult, runGeneration } from "@/lib/generation/runner";
+import { fetchProgress, type GenerationResult, GenerationTimedOut, runGeneration } from "@/lib/generation/runner";
+import { RUN_LIMIT_MINUTES, RunTimedOutError } from "@/lib/generation/run-limit";
+import { postJson } from "@/lib/upload-client";
 
 const STAGE_TEXT: Record<BatchView["stage"], string> = {
   draft: "drafting",
@@ -17,7 +20,7 @@ const STAGE_TEXT: Record<BatchView["stage"], string> = {
   failed: "failed",
 };
 
-type Phase = "batches" | "topup" | "finalizing" | "done" | "error";
+type Phase = "batches" | "topup" | "finalizing" | "done" | "error" | "timed_out";
 
 /**
  * Screen 2. Starts generating on load (a first mock and a regenerated one alike) and plays
@@ -25,11 +28,17 @@ type Phase = "batches" | "topup" | "finalizing" | "done" | "error";
  * moment generation finishes, whatever the reels are doing.
  */
 export function SpinRunner({ initial }: { initial: ExamProgress }) {
+  const router = useRouter();
+  // Opened (or reloaded) after the run's time ran out: offer Retry rather than starting again.
+  const alreadyTimedOut = initial.status === "generating" && initial.runMsLeft <= 0;
   const [batches, setBatches] = useState<Map<number, BatchView>>(() => new Map(initial.batches.map((b) => [b.batchIndex, b])));
   const [completionOrder, setCompletionOrder] = useState<number[]>(() =>
     initial.batches.filter((b) => b.stage === "done" || b.stage === "failed").map((b) => b.batchIndex),
   );
-  const [phase, setPhase] = useState<Phase>(initial.status === "generating" ? "batches" : "done");
+  const [phase, setPhase] = useState<Phase>(initial.status !== "generating" ? "done" : alreadyTimedOut ? "timed_out" : "batches");
+  const [timeoutMessage, setTimeoutMessage] = useState<string | null>(alreadyTimedOut ? new RunTimedOutError().message : null);
+  const [ready, setReady] = useState(initial.generated);
+  const [acting, setActing] = useState(false);
   const [result, setResult] = useState<GenerationResult | null>(
     initial.status === "generating"
       ? null
@@ -48,31 +57,67 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
     }
   }, []);
 
-  const run = useCallback(async () => {
-    setError(null);
-    setPhase("batches");
-    setStartedAt(Date.now());
-    setFinishedAt(null);
-    try {
-      setResult(await runGeneration(initial.examId, { onBatch, onPhase: setPhase }));
-      setPhase("done");
-    } catch (caught) {
-      setError((caught as Error).message);
-      setPhase("error");
-    } finally {
-      setFinishedAt(Date.now());
+  const run = useCallback(
+    async (progress?: ExamProgress) => {
+      setError(null);
+      setTimeoutMessage(null);
+      setPhase("batches");
+      setStartedAt(Date.now());
+      setFinishedAt(null);
+      try {
+        setResult(await runGeneration(initial.examId, { onBatch, onPhase: setPhase }, progress));
+        setPhase("done");
+      } catch (caught) {
+        if (caught instanceof GenerationTimedOut) {
+          setTimeoutMessage(caught.message);
+          setPhase("timed_out");
+          // How many questions finished batches already saved.
+          const latest = await fetchProgress(initial.examId).catch(() => null);
+          if (latest) setReady(latest.generated);
+        } else {
+          setError((caught as Error).message);
+          setPhase("error");
+        }
+      } finally {
+        setFinishedAt(Date.now());
+      }
+    },
+    [initial.examId, onBatch],
+  );
+
+  /** A fresh run for the same mock, carrying on from where it stopped. */
+  async function retry() {
+    setActing(true);
+    const restarted = await postJson<ExamProgress>(`/api/exams/${initial.examId}/retry`, {});
+    setActing(false);
+    if (!restarted.ok) {
+      setTimeoutMessage(`Couldn't restart: ${restarted.error}`);
+      return;
     }
-  }, [initial.examId, onBatch]);
+    void run(restarted.data);
+  }
+
+  /** End the run with the questions that are ready, and go and take them. */
+  async function keepReady() {
+    setActing(true);
+    const stopped = await postJson<GenerationResult>(`/api/exams/${initial.examId}/stop`, {});
+    setActing(false);
+    if (!stopped.ok) {
+      setTimeoutMessage(stopped.error);
+      return;
+    }
+    router.push(`/exam/${initial.examId}`);
+  }
 
   useEffect(() => {
     // The ref keeps React's development double-mount from starting two runs.
-    if (started.current || initial.status !== "generating") return;
+    if (started.current || initial.status !== "generating" || alreadyTimedOut) return;
     started.current = true;
     void run();
-  }, [initial.status, run]);
+  }, [initial.status, alreadyTimedOut, run]);
 
   useEffect(() => {
-    if (phase === "done" || phase === "error") return;
+    if (phase === "done" || phase === "error" || phase === "timed_out") return;
     const timer = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(timer);
   }, [phase]);
@@ -125,6 +170,31 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
           <button type="button" className="btn-gold" onClick={() => void run()}>
             Resume generation
           </button>
+        </div>
+      )}
+
+      {phase === "timed_out" && (
+        <div role="alert" className="panel space-y-4 p-5 text-center">
+          <p className="text-lg font-semibold text-cream">{timeoutMessage}</p>
+          <p className="text-cream">
+            {ready > 0
+              ? `${ready} of ${initial.questionCount} questions are ready and kept.`
+              : "No questions were finished yet."}
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button type="button" className="btn-gold" disabled={acting} onClick={() => void retry()}>
+              Retry
+            </button>
+            {ready > 0 && (
+              <button type="button" className="btn-quiet" disabled={acting} onClick={() => void keepReady()}>
+                Take the {ready} ready question{ready === 1 ? "" : "s"}
+              </button>
+            )}
+          </div>
+          <p className="text-sm text-dim">
+            Retry carries on from where it stopped, with another {RUN_LIMIT_MINUTES} minutes. It doesn&rsquo;t use another free
+            mock.
+          </p>
         </div>
       )}
 
@@ -189,6 +259,7 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
 function statusLine(phase: Phase, batches: BatchView[], result: GenerationResult | null): string {
   if (phase === "done" && result) return result.generated > 0 ? `JACKPOT — ${result.generated} questions ready` : "No questions survived the checks";
   if (phase === "error") return "The dealer stopped. See below.";
+  if (phase === "timed_out") return "Time's up at this table";
   if (phase === "finalizing") return "Shuffling the deck…";
   const drafting = batches.find((b) => b.stage === "draft" || b.stage === "draft_retry");
   if (drafting && batches.some((b) => b.metrics.length > 0)) return `Dealing from ${drafting.slots[0]?.topicLabel ?? "your material"}…`;

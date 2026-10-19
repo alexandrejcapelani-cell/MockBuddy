@@ -58,6 +58,13 @@ export function batchConcurrency(): number {
 }
 
 /**
+ * The hard ceiling on one generation run: from creating the mock (or pressing Retry) to the
+ * last stage. Every stage call gets this as its deadline, the server refuses stages after
+ * it, and the browser stops at it. Questions from batches that finished are kept.
+ */
+export const GENERATION_RUN_LIMIT_MS = 180_000;
+
+/**
  * Vercel's function limit on the Hobby plan with Fluid compute (on by default): 300 s.
  * Every AI route exports `maxDuration = 300` (as a literal: Next.js reads it statically).
  * Locally nothing enforces it, so requests only warn past it.

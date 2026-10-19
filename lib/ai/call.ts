@@ -51,7 +51,7 @@ export class ModelCallError extends Error {
     readonly kind: ModelFailureKind,
     message: string,
     readonly metrics: CallMetrics,
-    readonly details: { issues?: string[]; rawText?: string; retryAfterMs?: number; httpStatus?: number } = {},
+    readonly details: { issues?: string[]; rawText?: string; retryAfterMs?: number; httpStatus?: number; quotaIds?: string[] } = {},
   ) {
     super(message);
   }
@@ -132,8 +132,16 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
   try {
     interaction = await sendWithRetries(call, metrics);
   } catch (error) {
-    if (error instanceof ModelCallError) finish(error.kind, { error: error.message, httpStatus: error.details.httpStatus });
-    else finish("unexpected_error", { error: error instanceof Error ? error.message : String(error) });
+    if (error instanceof ModelCallError) {
+      finish(error.kind, {
+        error: error.message,
+        httpStatus: error.details.httpStatus,
+        quotaIds: error.details.quotaIds,
+        retryAfterMs: error.details.retryAfterMs,
+      });
+    } else {
+      finish("unexpected_error", { error: error instanceof Error ? error.message : String(error) });
+    }
     throw error;
   }
 
@@ -297,6 +305,7 @@ function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metric
   return new ModelCallError(classified.kind, classified.message, metrics, {
     retryAfterMs: classified.retryAfterMs,
     httpStatus: classified.httpStatus,
+    quotaIds: classified.quotaIds,
   });
 }
 

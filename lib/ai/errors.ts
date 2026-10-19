@@ -34,6 +34,8 @@ export interface ClassifiedError {
   retryAfterMs?: number;
   /** For the server log only; never shown. */
   httpStatus?: number;
+  /** For the server log only: which Google quota a 429 hit (e.g. …PerMinute…, …PerDay…). */
+  quotaIds?: string[];
 }
 
 export const MISSING_KEY_MESSAGE =
@@ -82,7 +84,8 @@ export function classifyApiError(error: unknown, context: { attempts: number; re
   }
   if (!isHttpError(error)) return null;
   const classified = classifyHttpError(error, context, secret);
-  return { ...classified, httpStatus: error.status };
+  const quotaIds = (rpcStatus(error).details ?? []).flatMap((d) => d.violations ?? []).flatMap((v) => (v.quotaId ? [v.quotaId] : []));
+  return { ...classified, httpStatus: error.status, ...(quotaIds.length > 0 ? { quotaIds } : {}) };
 }
 
 function classifyHttpError(error: SdkHttpError, context: { attempts: number; retries429: number }, secret?: string): ClassifiedError {

@@ -160,6 +160,8 @@ CREATE POLICY "generation_batches_select_own" ON "generation_batches" AS PERMISS
 CREATE POLICY "materials_select_own" ON "materials" AS PERMISSIVE FOR SELECT TO "authenticated" USING (user_id = (select auth.uid()));
 CREATE POLICY "questions_select_own" ON "questions" AS PERMISSIVE FOR SELECT TO "authenticated" USING (exists (select 1 from public.exams p where p.id = exam_id and p.user_id = (select auth.uid())));
 CREATE POLICY "subjects_select_own" ON "subjects" AS PERMISSIVE FOR SELECT TO "authenticated" USING (user_id = (select auth.uid()));
+-- 0001_generation_run_limit.sql
+ALTER TABLE "exams" ADD COLUMN "run_started_at" timestamp with time zone;
 -- supabase/storage.sql
 -- Supabase Storage for uploaded files: one private bucket. Each user's files live under a
 -- folder named after their user id ("<user id>/materials/…", "<user id>/samples/…"), and

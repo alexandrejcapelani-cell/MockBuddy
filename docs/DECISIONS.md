@@ -241,6 +241,31 @@ never weaken it). Where this section and older ones disagree, this one wins.
   the sum of its batches, so expect minutes rather than about one for 20 questions. That's
   accepted. Each request is still one model call, so the per-request limit is unaffected.
 
+## Generation run ceiling (2026-10-19)
+
+- **No generation run may exceed 3 minutes** (`GENERATION_RUN_LIMIT_MS` in
+  `lib/ai/config.ts`). A run starts when the mock is created or when the student presses
+  Retry (`exams.run_started_at`, migration `0001`; rows without it count from `created_at`).
+- Why: a 10-question mock on the real free tier sat in "generating" for 20+ minutes. Batch 1's
+  critique took 512 s (3 attempts) and its revise was rate limited (429) on 6 attempts over
+  300 s; the browser then re-ran the stage. Nothing bounded the total, and locally there
+  was no per-request deadline at all.
+- Enforced in three places: every stage call gets the run's end as its deadline (locally
+  too), so retries and backoff can't wait past it; the server refuses stages and top-ups
+  after it (409, `kind: "run_timed_out"`; not 408, which browsers silently re-send); and the
+  browser runner stops at the same moment, using the server's "time left" so the clocks
+  needn't agree, with a timeout on every request.
+- On timeout the spin screen says so (with the last problem, e.g. rate limited) and offers
+  **Retry** (`/api/exams/[id]/retry`: a fresh 3 minutes, carrying on from each batch's
+  stage, no extra free mock) and **Take the N ready questions** (`/api/exams/[id]/stop`:
+  unfinished batches are marked failed and the mock is finalized short). Finished batches'
+  questions are always kept. A late stage result can't revive a stopped batch.
+- Reopening the page after the limit shows the timeout screen; it never restarts silently.
+- Consequence to watch: on the real free tier a single draft call took about 115 s (8 to 13k
+  thinking tokens), so a 10-question mock often won't fit in 3 minutes and will need a
+  Retry. Making calls faster (CHANGES.md 2.6) is what makes the ceiling rarely bite.
+- 429 log lines now include which Google quota was hit (`quotaIds`) and the requested wait.
+
 ## Regeneration
 
 - New exam row, new seed, empty `used_chunk_ids`, `parent_exam_id` pointing at the

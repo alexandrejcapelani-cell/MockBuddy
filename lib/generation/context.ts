@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { blueprints, chunks, exams, generationBatches, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
 import type { ExamContext, SlotWithSources } from "./prompts";
+import { runMsLeft } from "./run-limit";
 import type { PlanSlot, StageMetrics } from "./types";
 
 // Loading what the generation stages need, and the progress view the client polls.
@@ -104,6 +105,8 @@ export interface ExamProgress {
   questionCount: number;
   difficulty: ExamRow["difficulty"];
   generated: number;
+  /** Time left in the current run, measured on the server, so the browser's clock doesn't matter. */
+  runMsLeft: number;
   batches: BatchView[];
 }
 
@@ -121,6 +124,7 @@ export async function examProgress(examId: string): Promise<ExamProgress> {
     questionCount: exam.questionCount,
     difficulty: exam.difficulty,
     generated,
+    runMsLeft: exam.status === "generating" ? runMsLeft(exam) : 0,
     batches: batches.map((batch) => batchView(batch, exam.plan)),
   };
 }

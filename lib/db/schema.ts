@@ -153,6 +153,11 @@ export const exams = pgTable(
       .default(sql`'[]'::jsonb`),
     generationSeed: integer("generation_seed").notNull(),
     plan: jsonb("plan").$type<ExamPlan>().notNull(),
+    /**
+     * When the current generation run started (creation, or the last Retry). A run gets
+     * GENERATION_RUN_LIMIT_MS from here; null on rows from before the limit means created_at.
+     */
+    runStartedAt: timestamp("run_started_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [

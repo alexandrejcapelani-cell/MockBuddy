@@ -1,6 +1,6 @@
 import "server-only";
 import { randomInt } from "node:crypto";
-import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, notInArray, sql } from "drizzle-orm";
 import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
 import { db } from "@/lib/db";
 import { blueprints, chunks, exams, generationBatches, materials, questions } from "@/lib/db/schema";
@@ -9,6 +9,7 @@ import { ADMIN_TOPIC } from "@/lib/ingest/topic-labels";
 import type { BlueprintSection } from "@/lib/schemas";
 import { ancestorExamIds, loadExam } from "./context";
 import { BATCH_SIZE, batchOrdinals, buildPlan, type PlannableChunk, selectChunks, slotFor } from "./plan";
+import { RunTimedOutError, runDeadline } from "./run-limit";
 import { FREE_MOCKS, FreeMocksUsedError, mocksUsed } from "./quota";
 import type { ExamDifficulty, PlanSlot } from "./types";
 
@@ -68,6 +69,7 @@ export async function createExam(input: {
         status: "generating",
         generationSeed: seed,
         plan,
+        runStartedAt: sql`now()`,
       })
       .returning({ id: exams.id });
     await tx.insert(generationBatches).values(
@@ -156,6 +158,7 @@ export async function requestTopup(examId: string): Promise<TopupResult> {
     const [exam] = await tx.select().from(exams).where(eq(exams.id, examId)).for("update");
     if (!exam) throw new RequestError("That exam doesn't exist.", 404);
     if (exam.status !== "generating") return { status: "not_needed" };
+    if (Date.now() >= runDeadline(exam)) throw new RunTimedOutError();
 
     const batches = await tx.select().from(generationBatches).where(eq(generationBatches.examId, examId));
     if (batches.some((batch) => batch.stage !== "done" && batch.stage !== "failed")) return { status: "pending" };
@@ -231,4 +234,52 @@ export async function finalizeExam(examId: string): Promise<{ requested: number;
     const generated = await tx.$count(questions, eq(questions.examId, examId));
     return { requested: exam.questionCount, generated, short: Math.max(0, exam.questionCount - generated) };
   });
+}
+
+/**
+ * Retry after a timeout: starts a fresh run (another GENERATION_RUN_LIMIT_MS) for the same
+ * mock. Finished batches and their questions stay; unfinished ones carry on from their
+ * stage. It doesn't use another free mock.
+ */
+export async function restartRun(examId: string): Promise<void> {
+  const [exam] = await db()
+    .update(exams)
+    .set({ runStartedAt: sql`now()` })
+    .where(and(eq(exams.id, examId), eq(exams.status, "generating")))
+    .returning({ id: exams.id });
+  if (!exam) throw new RequestError("This mock has already finished generating.", 409);
+}
+
+/**
+ * Keep what's ready: after a timeout, ends the run with the questions that already passed.
+ * Unfinished batches are marked failed (their slots dropped) and the mock is finalized as
+ * a short mock. Refuses while a stage is still being written, so nothing is lost mid-save.
+ */
+export async function stopRun(examId: string): Promise<{ requested: number; generated: number; short: number }> {
+  await db().transaction(async (tx) => {
+    const [exam] = await tx.select().from(exams).where(eq(exams.id, examId)).for("update");
+    if (!exam) throw new RequestError("That exam doesn't exist.", 404);
+    if (exam.status !== "generating") return;
+    const open = await tx
+      .select()
+      .from(generationBatches)
+      .where(and(eq(generationBatches.examId, examId), notInArray(generationBatches.stage, ["done", "failed"])));
+    if (open.some((batch) => batch.runningSince !== null && Date.now() - batch.runningSince.getTime() < 3 * 60_000)) {
+      throw new RequestError("The last batch is still saving. Try again in a few seconds.", 409);
+    }
+    const reason = "Stopped at the time limit before this batch finished.";
+    for (const batch of open) {
+      await tx
+        .update(generationBatches)
+        .set({
+          stage: "failed",
+          error: reason,
+          runningSince: null,
+          outcomes: batch.slotOrdinals.map((slot) => ({ slot, status: "dropped" as const, revised: false, reason })),
+          updatedAt: sql`now()`,
+        })
+        .where(eq(generationBatches.id, batch.id));
+    }
+  });
+  return finalizeExam(examId);
 }

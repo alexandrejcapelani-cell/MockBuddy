@@ -8,6 +8,13 @@
       "when": 1792429185107,
       "tag": "0000_supabase_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792438418318,
+      "tag": "0001_generation_run_limit",
+      "breakpoints": true
     }
   ]
 }

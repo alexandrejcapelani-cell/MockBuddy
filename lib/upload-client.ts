@@ -5,13 +5,20 @@ import type { UploadKind } from "./files";
 
 export type JsonResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string; data: Record<string, unknown> };
 
-/** POSTs JSON to one of the app's routes; the session cookie goes with it. */
-export async function postJson<T>(url: string, body: unknown): Promise<JsonResult<T>> {
+/**
+ * POSTs JSON to one of the app's routes; the session cookie goes with it. With `timeoutMs`,
+ * a request that takes longer is abandoned and answers { kind: "client_timeout" }.
+ */
+export async function postJson<T>(url: string, body: unknown, options: { timeoutMs?: number } = {}): Promise<JsonResult<T>> {
   const headers = { "Content-Type": "application/json" };
+  const signal = options.timeoutMs === undefined ? undefined : AbortSignal.timeout(Math.max(1, options.timeoutMs));
   let response: Response;
   try {
-    response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
   } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      return { ok: false, status: 0, error: "The request took too long and was stopped.", data: { kind: "client_timeout" } };
+    }
     return { ok: false, status: 0, error: `Couldn't reach the app server: ${(error as Error).message}`, data: {} };
   }
   return readJson<T>(response);

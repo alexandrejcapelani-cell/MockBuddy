@@ -1,0 +1,1 @@
+ALTER TABLE "exams" ADD COLUMN "run_started_at" timestamp with time zone;

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ModelCallError, type ModelFailureKind } from "@/lib/ai/call";
 import { ConfigError } from "@/lib/env";
 import { FreeMocksUsedError } from "@/lib/generation/quota";
+import { RunTimedOutError } from "@/lib/generation/run-limit";
 import { DocumentError } from "@/lib/ingest/extract";
 import { IngestError } from "@/lib/ingest/ingest";
 import { StorageNotFoundError } from "@/lib/storage";
@@ -60,6 +61,11 @@ export function errorResponse(error: unknown, extra: Record<string, unknown> = {
   if (error instanceof IngestError) return NextResponse.json({ error: error.message, ...extra }, { status: error.status });
   if (error instanceof DocumentError) return NextResponse.json({ error: error.message, ...extra }, { status: 422 });
   if (error instanceof StorageNotFoundError) return NextResponse.json({ error: error.message, ...extra }, { status: 404 });
+  if (error instanceof RunTimedOutError) {
+    // 409, not 408: browsers silently re-send a request that gets a 408, which would hide this
+    // answer behind a second, emptier one.
+    return NextResponse.json({ error: error.message, kind: "run_timed_out", ...extra }, { status: 409 });
+  }
   if (error instanceof FreeMocksUsedError) {
     return NextResponse.json({ error: error.message, kind: "free_mocks_used", ...extra }, { status: 403 });
   }

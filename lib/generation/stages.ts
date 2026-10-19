@@ -25,6 +25,7 @@ import {
   revisePrompt,
   type SlotWithSources,
 } from "./prompts";
+import { RunTimedOutError, runDeadline } from "./run-limit";
 import { findNearDuplicate } from "./similarity";
 import type { BatchStage, DraftSlot, SlotOutcome, SlotVerdict, StageMetrics } from "./types";
 import { normalizeQuestion, questionIssues } from "./validate";
@@ -36,6 +37,8 @@ import { normalizeQuestion, questionIssues } from "./validate";
 /** A claim older than this is treated as abandoned (the request that held it died). */
 const STALE_CLAIM = sql`now() - interval '3 minutes'`;
 const MAX_CRITIQUE_ATTEMPTS = 2;
+/** A model call that fails this close to the run's end failed because the time ran out. */
+const RUN_END_MARGIN_MS = 10_000;
 
 export class BatchBusyError extends Error {
   override name = "BatchBusyError";
@@ -56,12 +59,19 @@ interface StageRun {
 
 type StageResult = Partial<Pick<BatchRow, "stage" | "drafts" | "verdicts" | "outcomes" | "attempts" | "error">>;
 
+/**
+ * `requestDeadline` is the serverless limit (Vercel only). The exam's run deadline (3 minutes
+ * from the run's start) always applies on top, locally too, so no stage can run past it.
+ */
 export async function runNextStage(
   examId: string,
   batchIndex: number,
-  deadlineAt: number | undefined,
+  requestDeadline: number | undefined,
 ): Promise<BatchView> {
   const exam = await loadExam(examId);
+  const runEnds = runDeadline(exam);
+  if (Date.now() >= runEnds) throw new RunTimedOutError();
+  const deadlineAt = Math.min(runEnds, requestDeadline ?? Number.POSITIVE_INFINITY);
   const [claimed] = await db()
     .update(generationBatches)
     .set({ runningSince: sql`now()` })
@@ -101,8 +111,12 @@ export async function runNextStage(
     return batchView(await save(run, result), exam.plan);
   } catch (error) {
     // Release the batch with whatever was measured, then let the route report the error.
-    // A retryable model error leaves the stage where it was, so the client can run it again.
+    // A retryable model error leaves the stage where it was, so the client can run it again,
+    // unless the run's time is up: then that is what happened, whatever the model said.
     await save(run, {});
+    if (error instanceof ModelCallError && runEnds - Date.now() < RUN_END_MARGIN_MS) {
+      throw new RunTimedOutError(error.kind === "deadline" ? "The AI was still working on the next questions." : error.message);
+    }
     throw error;
   }
 }
@@ -416,7 +430,9 @@ async function save(run: StageRun, result: StageResult): Promise<BatchRow> {
       runningSince: null,
       updatedAt: sql`now()`,
     })
-    .where(eq(generationBatches.id, run.batch.id))
+    // Only while the batch is still at the stage this request claimed: if the run was stopped
+    // meanwhile (batch marked failed), a late result doesn't bring it back.
+    .where(and(eq(generationBatches.id, run.batch.id), eq(generationBatches.stage, run.batch.stage)))
     .returning();
-  return saved;
+  return saved ?? run.batch;
 }
