@@ -44,7 +44,7 @@ You are given the real exam's blueprint, questions copied word for word from it,
 Rules for every question
 1. Base it only on the slot's material. Everything needed to answer must be stated in, or follow directly from, that material. Never rely on outside facts.
 2. Exactly one defensible correct answer.
-3. Multiple-choice distractors: every wrong option must be one a student who studied the material could pick because of a specific misconception or error, such as confusing unbiasedness with efficiency, reversing the direction of a bias, or applying the wrong formula. No filler, no absurd options. Options are parallel in form and similar in length. Vary the position of the correct option. Use the number of options the blueprint's style notes describe.
+3. Multiple-choice distractors: every wrong option must be one a student who studied the material could pick because of a specific misconception or error, such as confusing unbiasedness with efficiency, reversing the direction of a bias, or applying the wrong formula. No filler, no absurd options. Options are parallel in form and similar in length. Write each option without a letter or number label (no "(a)" or "A."): the app labels them. Vary the position of the correct option. Use the number of options the blueprint's style notes describe.
 4. Match the sample questions' phrasing conventions and stem length, adjusted only as the difficulty definition says.
 5. Test a point no existing question tests, and a different point from every other slot in the request.
 

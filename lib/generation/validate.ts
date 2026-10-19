@@ -141,6 +141,7 @@ export function normalizeQuestion(question: GeneratedQuestion, slot: PlanSlot): 
   if (slot.type === "mcq") {
     return {
       ...base,
+      options: question.options ? stripOptionLabels(question.options) : question.options,
       option_explanations: [...(question.option_explanations ?? [])].sort((a, b) => a.index - b.index),
       expected_answer: null,
       rubric: null,
@@ -152,4 +153,18 @@ export function normalizeQuestion(question: GeneratedQuestion, slot: PlanSlot): 
   const noOptions = { options: null, correct_option: null, option_explanations: null };
   if (slot.type === "short") return { ...base, ...noOptions, numeric_answer: null, tolerance: null, unit: null };
   return { ...base, ...noOptions, expected_answer: null, rubric: null };
+}
+
+/**
+ * Removes letter labels the model copied from the sample paper ("(a) …", "A. …", "b) …"),
+ * since the app shows its own A–D. Only when every option starts with its own position's
+ * letter, so an option that merely begins with a letter keeps it.
+ */
+export function stripOptionLabels(options: string[]): string[] {
+  const label = (index: number) => {
+    const letter = String.fromCharCode(97 + index);
+    return new RegExp(`^\\s*(?:\\(${letter}\\)|${letter}[).:])\\s+`, "i");
+  };
+  if (options.length === 0 || !options.every((option, i) => label(i).test(option))) return options;
+  return options.map((option, i) => option.replace(label(i), ""));
 }

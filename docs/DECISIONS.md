@@ -133,7 +133,8 @@ never weaken it). Where this section and older ones disagree, this one wins.
   | --- | --- | --- |
   | Topic labelling | `gemini-3.5-flash-lite` | low |
   | Blueprint extraction | `gemini-3.8-flash` | high |
-  | Draft, critique, revise, grading | `gemini-3.8-flash` | medium |
+  | Draft (and its redraft) | `gemini-3.8-flash` | low |
+  | Critique, revise, grading | `gemini-3.8-flash` | medium |
 
 - Why these: both are stable and on the free tier. Gemini's strongest models (Gemini 4
   Argon, 3.1 Pro) have no free tier, so `gemini-3.8-flash`, the newest stable Flash, is the
@@ -165,10 +166,9 @@ never weaken it). Where this section and older ones disagree, this one wins.
 - Draft, critique and revise stay three separate model calls. Each runs in its own HTTP
   request (`/api/generate` with a `stage`), with the state between stages saved in the
   database. Every AI route exports `maxDuration = 300`.
-- Batches of 5 run **one at a time** from the client by default, for free-tier rate limits
-  (see Rate limits). `exams.plan` assigns every slot its type, section, marks and chunk(s)
-  up front, so batches don't depend on each other and can run in parallel again with one
-  flag. For the wall-clock target, see Timing.
+- Batches of 5 run **in parallel** from the client (see Rate limits). `exams.plan` assigns
+  every slot its type, section, marks and chunk(s) up front, so batches don't depend on
+  each other. For the wall-clock target, see Timing.
 - Consequence, accepted: the draft call doesn't see stems from other batches of the same
   exam. Cross-batch dedup relies on chunk rotation, a server-side word-overlap check and
   the critique pass. Stems from the previous exam chain and the sample exam are still
@@ -208,10 +208,11 @@ never weaken it). Where this section and older ones disagree, this one wins.
   minute, input tokens per minute and requests per day (daily limits reset at midnight
   Pacific time). Google no longer lists the free-tier numbers on its rate-limits page;
   AI Studio shows each project's actual limits.
-- **Batches run one at a time by default** (`BATCH_MODE = "sequential"` in
-  `lib/ai/config.ts`), so a free-tier key isn't hit with several drafts at once. Set it to
-  `"parallel"` to go back to up to `PARALLEL_BATCHES` (4) at once on a paid key. The stages
-  inside a batch were always sequential.
+- **Batches run in parallel** (`BATCH_MODE = "parallel"` in `lib/ai/config.ts`), up to
+  `PARALLEL_BATCHES` (4) at once, now that the Gemini project has billing on. Two parallel
+  10-question runs on the paid key saw no 429s at all. Set it to `"sequential"` for a
+  free-tier key, which can't take several drafts at once. The stages inside a batch are
+  always sequential.
 - Every model call retries a per-minute 429 with exponential backoff plus jitter, and waits
   as long as Gemini's `RetryInfo.retryDelay` (or a `retry-after` header) asks, up to 60 s.
   A per-day 429 isn't retried: it's "quota exceeded". The SDK's built-in retries are off
@@ -265,6 +266,36 @@ never weaken it). Where this section and older ones disagree, this one wins.
   thinking tokens), so a 10-question mock often won't fit in 3 minutes and will need a
   Retry. Making calls faster (CHANGES.md 2.6) is what makes the ceiling rarely bite.
 - 429 log lines now include which Google quota was hit (`quotaIds`) and the requested wait.
+
+## Draft speed: low thinking, parallel batches (2026-10-20)
+
+- **Drafts use thinking level "low"**, the lowest gemini-3.8-flash accepts (it rejects
+  "minimal"; on this model "low" produced no thinking tokens at all). At "medium" one
+  5-question draft took 95 s and then 159 s (10 to 19k thinking tokens): too slow and too
+  unpredictable for a 3-minute run, and over a 40 s per-call target. At "low" drafts took
+  20 to 25 s across 5 calls. Critique, revise and grading stay at "medium", since they are
+  the checks; batch size stays 5, since 3 wasn't needed.
+- Measured on the paid key, same material and sample exam, through the app (stand-in
+  Supabase):
+
+  | Run | Draft | Slowest call | Whole run | Kept | Failed validation | Sent to revise |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | 5 questions, medium | 159 s | 159 s | timed out, finished on Retry | 5/5 | 0 | 1 |
+  | 5 questions, low | 25 s | 31 s (revise) | 79 s | 5/5 | 0 | 1 |
+  | 10 questions, low, parallel | 21 s, 23 s | 23 s | 43 s | 10/10 | 0 | 0 |
+  | 10 questions, low, parallel | 21 s, 22 s | 35 s (revise) | 92 s | 10/10 | 0 | 1 |
+
+  Quality signals held: no question failed validation, and the examiner's revisions were
+  the same kind (a numerical question repeating the IV-slope calculation). Low-thinking
+  stems are shorter (about 170 to 200 characters against 330) and worked solutions a bit
+  shorter; explanations stayed about as long. The test material was only 2 chunks, which
+  is what drives the repeated-calculation revisions. Draft cost fell from $0.096 to $0.02.
+- Still over 40 s: the blueprint (52 to 63 s at "high"), which runs once per sample exam.
+  Within Vercel's 300 s, so left as is.
+- **MCQ options were carrying their own labels** ("(a) …"), copied from the sample paper's
+  style, in every run including medium. The draft prompt now says not to label options,
+  and `stripOptionLabels` (lib/generation/validate.ts) removes consistent labels when a
+  question is saved. The next run had none.
 
 ## Regeneration
 

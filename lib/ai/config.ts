@@ -24,11 +24,13 @@ export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 /**
  * Thinking level per call. Set explicitly: the defaults differ by model. The blueprint runs
  * once per sample exam and shapes every mock after it, so it gets the most thinking.
+ * Drafts use the lowest level gemini-3.8-flash allows: at medium, one 5-question draft took
+ * 95 to 160 s (10 to 19k thinking tokens); the critique and revise passes check the result.
  */
 export const THINKING: Record<ModelTask, ThinkingLevel> = {
   topicLabels: "low",
   blueprint: "high",
-  draft: "medium",
+  draft: "low",
   critique: "medium",
   revise: "medium",
   grading: "medium",
@@ -45,11 +47,12 @@ export const MAX_TOKENS: Record<ModelTask, number> = {
 };
 
 /**
- * How the browser runs an exam's batches. "sequential" runs one batch at a time, which keeps
- * a free-tier key under its requests-per-minute limit; "parallel" runs up to PARALLEL_BATCHES
- * at once, for keys with paid-tier limits. Each batch is still draft, critique, revise.
+ * How the browser runs an exam's batches. "parallel" runs up to PARALLEL_BATCHES at once, for
+ * keys with paid-tier limits (the deployed key has billing on); "sequential" runs one batch at
+ * a time, which keeps a free-tier key under its requests-per-minute limit. Each batch is still
+ * draft, critique, revise.
  */
-export const BATCH_MODE: "sequential" | "parallel" = "sequential";
+export const BATCH_MODE: "sequential" | "parallel" = "parallel";
 export const PARALLEL_BATCHES = 4;
 
 /** Batches generating at once under BATCH_MODE. */

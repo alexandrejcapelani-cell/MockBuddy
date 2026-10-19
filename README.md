@@ -38,8 +38,9 @@ npm run dev
 ```
 
 Open http://localhost:3000. Costs show as "free tier" unless you set `GEMINI_TIER=paid`.
-To run batches in parallel on a paid key, set `BATCH_MODE` in `lib/ai/config.ts` to
-`"parallel"`. Don't run `npm run build` while `npm run dev` is running: they share `.next`.
+Batches run in parallel (for a key with billing); on a free-tier key, set `BATCH_MODE` in
+`lib/ai/config.ts` to `"sequential"`. Don't run `npm run build` while `npm run dev` is
+running: they share `.next`.
 
 1. **Subject**: add one, e.g. "Econometrics".
 2. **Your material**: slide PDFs, TXT or Markdown. Each is split into chunks and labelled

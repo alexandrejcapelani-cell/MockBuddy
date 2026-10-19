@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { GeneratedQuestion } from "../schemas.ts";
 import type { PlanSlot } from "./types.ts";
-import { normalizeQuestion, questionIssues } from "./validate.ts";
+import { normalizeQuestion, questionIssues, stripOptionLabels } from "./validate.ts";
 
 const chunk = `Homoskedasticity (MLR.5)
 MLR.5 states that Var(u | x1, ..., xk) = sigma^2: the error variance does not depend on the regressors.
@@ -108,4 +108,26 @@ test("normalizeQuestion takes marks and topic from the slot and nulls fields of 
   assert.equal(normalized.topic_label, "Homoskedasticity");
   assert.equal(normalized.expected_answer, null);
   assert.equal(normalized.numeric_answer, null);
+});
+
+describe("stripOptionLabels", () => {
+  test("removes the labels models copy from sample papers, in any common form", () => {
+    assert.deepEqual(stripOptionLabels(["(a) weak instruments", "(b) invalid", "(c) heteroskedastic", "(d) collinear"]), [
+      "weak instruments",
+      "invalid",
+      "heteroskedastic",
+      "collinear",
+    ]);
+    assert.deepEqual(stripOptionLabels(["A. one", "B. two", "C. three"]), ["one", "two", "three"]);
+    assert.deepEqual(stripOptionLabels(["a) one", "b) two"]), ["one", "two"]);
+  });
+
+  test("leaves options alone unless every one carries its own position's label", () => {
+    const natural = ["A larger sample", "Biased upwards", "Consistent but biased", "Depends on the instrument"];
+    assert.deepEqual(stripOptionLabels(natural), natural);
+    const mixed = ["(a) one", "two", "(c) three"];
+    assert.deepEqual(stripOptionLabels(mixed), mixed);
+    const shuffled = ["(b) one", "(a) two"];
+    assert.deepEqual(stripOptionLabels(shuffled), shuffled);
+  });
 });
