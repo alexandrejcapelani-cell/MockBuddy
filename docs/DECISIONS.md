@@ -50,6 +50,25 @@ Agreed on 2026-10-18 after the spec review, updated since. Where this file and
 - `stop_reason` of `refusal` or `max_tokens` is reported as its own failure. The API's
   server-side refusal fallback (`fallbacks: "default"`) is on.
 
+### How the stages work (implemented in phase 3)
+
+- A `generation_batches` row holds each batch's state between stage requests (drafts,
+  verdicts, outcomes, per-call metrics). A request claims the batch before running a stage,
+  so two requests never run the same batch at once.
+- Validation is per question, not per batch. A draft that fails validation gets one retry
+  (the `draft_retry` stage) with its problems listed; failing again drops that question
+  only. A whole batch is dropped only when its draft call fails outright twice, or the
+  critique fails twice.
+- The critique is one call per batch. Any failed check, any filler distractor, or a stem
+  that the word-overlap check finds too close to an existing one sends the question to
+  revise.
+- "Still fails after revise" means the revised question fails validation or the overlap
+  check; there is no second critique (one round only). Dropped questions are replaced by
+  top-up batches.
+- Word-overlap check: 3-word shingles, overlap coefficient, threshold 0.6.
+- `marks` and `topic_label` come from the slot, not the model.
+- Chunks labelled "Course logistics" (title slides, admin) never get questions.
+
 ## Rate limits
 
 - Every model call retries HTTP 429 with exponential backoff plus jitter, and waits for the

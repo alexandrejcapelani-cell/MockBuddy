@@ -3,6 +3,7 @@ import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
 import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
 import { serverEnv } from "@/lib/env";
 import { listMaterials, materialTotals } from "@/lib/materials";
+import { GenerateForm } from "./generate-form";
 import { MaterialActions } from "./material-actions";
 import { MaterialUploader } from "./material-uploader";
 import { SampleUploader } from "./sample-uploader";
@@ -17,6 +18,13 @@ export default async function TablePage() {
     materialTotals(userId),
     activeBlueprint(userId),
   ]);
+
+  const readiness =
+    totals.topics === 0
+      ? "Add material first: generation needs at least one processed file."
+      : blueprint === null
+        ? "Add a sample exam first: generation copies its style."
+        : null;
 
   return (
     <main className="mx-auto max-w-3xl space-y-10 p-6">
@@ -88,6 +96,13 @@ export default async function TablePage() {
         ) : (
           <p className="text-sm text-muted-foreground">No sample exam yet.</p>
         )}
+      </section>
+
+      <section aria-labelledby="generate-heading" className="space-y-4">
+        <h2 id="generate-heading" className="text-lg font-semibold">
+          Generate a mock
+        </h2>
+        <GenerateForm ready={readiness === null} reason={readiness} />
       </section>
     </main>
   );

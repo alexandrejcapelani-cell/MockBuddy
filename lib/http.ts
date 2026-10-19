@@ -1,6 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import type { z } from "zod";
+import { z } from "zod";
 import { ModelCallError } from "@/lib/ai/call";
 import { ConfigError } from "@/lib/env";
 import { DocumentError } from "@/lib/ingest/extract";
@@ -34,6 +34,13 @@ export async function parseBody<S extends z.ZodType>(request: Request, schema: S
     throw new RequestError(`Invalid request: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
   }
   return parsed.data;
+}
+
+/** The `[examId]` route segment, rejecting anything that isn't an exam id. */
+export async function examIdParam(params: Promise<{ examId: string }>): Promise<string> {
+  const { examId } = await params;
+  if (!z.uuid().safeParse(examId).success) throw new RequestError("That exam doesn't exist.", 404);
+  return examId;
 }
 
 export function errorResponse(error: unknown, extra: Record<string, unknown> = {}): NextResponse {

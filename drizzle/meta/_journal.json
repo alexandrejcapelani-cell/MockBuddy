@@ -22,6 +22,13 @@
       "when": 1792402447139,
       "tag": "0002_phase2_blueprint",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792402720601,
+      "tag": "0003_phase3_generation",
+      "breakpoints": true
     }
   ]
 }
