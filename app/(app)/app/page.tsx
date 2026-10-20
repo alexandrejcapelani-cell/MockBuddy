@@ -82,7 +82,7 @@ async function SubjectTable({ subjectId, subjectName, freeMocksLeft }: { subject
     <section aria-label={subjectName} className="space-y-8">
       <div className="grid gap-6 md:grid-cols-2">
         <section aria-labelledby="material-heading" className="panel space-y-4 p-5">
-          <div className="flex items-baseline justify-between gap-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <h2 id="material-heading" className="text-2xl font-semibold">
               Your material
             </h2>

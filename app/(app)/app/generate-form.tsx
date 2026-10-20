@@ -112,9 +112,10 @@ export function GenerateForm({
       <div className="space-y-7">
         <fieldset className="space-y-3">
           <legend className="font-display text-xl font-semibold text-cream">How many questions?</legend>
-          <div className="flex flex-wrap gap-5">
+          {/* All four chips on one row on a phone too, so 20 isn't left alone on a second row. */}
+          <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:gap-5">
             {COUNTS.map((n) => (
-              <label key={n} className="cursor-pointer">
+              <label key={n} className="flex cursor-pointer justify-center">
                 <input
                   type="radio"
                   name="count"
@@ -124,7 +125,7 @@ export function GenerateForm({
                   className="peer sr-only"
                 />
                 <span
-                  className="poker-chip tabular peer-checked:-translate-y-2 peer-checked:shadow-[0_0_0_3px_var(--gold-bright),0_10px_18px_-6px_rgb(0_0_0/0.7)] peer-focus-visible:outline-3 peer-focus-visible:outline-offset-4 peer-focus-visible:outline-gold-bright"
+                  className="poker-chip aspect-square h-auto w-full max-w-14 text-base tabular sm:size-[4.25rem] sm:max-w-none sm:text-[1.15rem] peer-checked:-translate-y-2 peer-checked:shadow-[0_0_0_3px_var(--gold-bright),0_10px_18px_-6px_rgb(0_0_0/0.7)] peer-focus-visible:outline-3 peer-focus-visible:outline-offset-4 peer-focus-visible:outline-gold-bright"
                   style={{ "--chip-color": CHIP_COLOURS[n].chip, "--chip-ink": CHIP_COLOURS[n].ink } as React.CSSProperties}
                 >
                   {n}

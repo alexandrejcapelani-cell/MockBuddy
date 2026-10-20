@@ -623,3 +623,18 @@ Each lands in its own reviewed migration when the phase that needs it starts.
 - The table moved from `/` to `/app`; app screens share a header through the `(app)`
   route group.
 - shadcn/ui's `tw-animate-css` and Base UI stay; no MockBuddy animation uses them.
+- **Phone pass (2026-10-20, before deploying).** The landing page, `/signup`, `/login` and
+  `/app` were checked at 375 px with a phone user agent, in each `/app` state: empty, the
+  bot's subject "QA-7F3K2A grading bot test", and material and a sample with
+  85-character filenames. `/app` and the landing page were also checked at 360 and 320 px.
+  No page scrolled sideways at any width. No text was under 12 px, no text on a flat
+  colour was under 4.5:1, and no input was under 16 px, so iOS doesn't zoom in on focus.
+  Fixed:
+  - The landing reels cut words mid-word ("Instrumen / tal", "Heteroske / dasticity"),
+    because headless Chromium has no hyphenation dictionary. The third reel is now
+    "Robust standard errors", and "Instrumental" has a soft hyphen.
+  - On `/app`, the "20" count chip sat alone on a second row. Phones now get a 4-column
+    row of chips that fill their cells, up to 3.5rem.
+  - The "Your material" heading wrapped beside its count; the count now drops below it.
+- **Known issue, not fixed:** a material row says "1 chunks"
+  (`app/(app)/app/page.tsx`, the material list).

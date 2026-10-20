@@ -24,7 +24,10 @@ const STEPS = [
   },
 ];
 
-const REELS = ["Omitted variable bias", "Instrumental variables", "Heteroskedasticity"];
+// A phone-width reel fits about 80px of text, so every word here fits one line, except
+// "Instrumental", which gets a soft hyphen: browsers without hyphenation dictionaries
+// (headless Chromium, for one) would otherwise cut it anywhere, with no hyphen.
+const REELS = ["Omitted variable bias", "Instru­mental variables", "Robust standard errors"];
 
 /**
  * The landing page: public, with one button, Sign up. The app itself lives at /app, behind a
