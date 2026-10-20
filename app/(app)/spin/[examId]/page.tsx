@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { ownsExam } from "@/lib/ownership";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
+import { FORMAT_NAMES } from "@/lib/generation/format";
 import { examProgress } from "@/lib/generation/context";
 import { RequestError } from "@/lib/http";
 import { SpinRunner } from "./spin-runner";
@@ -23,8 +24,8 @@ export default async function SpinPage({ params }: { params: Promise<{ examId: s
       <header className="space-y-1 text-center">
         <h1 className="font-display text-4xl font-bold text-gold-text">The spin</h1>
         <p className="text-dim">
-          {progress.questionCount} questions · {DIFFICULTY_NAMES[progress.difficulty]} · every batch of 5 is drafted, checked by an
-          examiner pass and revised where needed
+          {progress.questionCount} questions · {DIFFICULTY_NAMES[progress.difficulty]} · {FORMAT_NAMES[progress.format]} · every
+          batch of 5 is drafted, checked by an examiner pass and revised where needed
         </p>
       </header>
       <SpinRunner initial={progress} />

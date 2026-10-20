@@ -86,3 +86,19 @@ export function questionState(view: QuestionView): QuestionState {
   if (!view.answer) return "unanswered";
   return view.answer.isCorrect ? "correct" : "wrong";
 }
+
+/**
+ * While a mock streams in, folds the latest list from the server into what the exam page
+ * holds: new questions join in paper order and numbers follow the server, but an answer
+ * the page already has is kept if the list was read before it was saved.
+ */
+export function mergeDealt(current: QuestionView[], incoming: QuestionView[]): QuestionView[] {
+  const held = new Map(current.map((view) => [view.id, view]));
+  const merged = incoming.map((view) => {
+    const mine = held.get(view.id);
+    return mine?.answer && !view.answer ? { ...mine, ordinal: view.ordinal } : view;
+  });
+  const arrived = new Set(incoming.map((view) => view.id));
+  // Questions are never deleted, so anything missing is from a list read earlier: keep it.
+  return [...merged, ...current.filter((view) => !arrived.has(view.id))].sort((a, b) => a.ordinal - b.ordinal);
+}

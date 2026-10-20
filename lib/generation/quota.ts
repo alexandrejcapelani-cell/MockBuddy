@@ -4,7 +4,7 @@ import { type Db, db } from "@/lib/db";
 import { exams, questions } from "@/lib/db/schema";
 import { FREE_MOCKS, FREE_MOCKS_USED_MESSAGE } from "@/lib/free-mocks";
 
-// The free-mock quota: every account can generate FREE_MOCKS mocks (new or regenerated),
+// The free-mock quota: every account can generate FREE_MOCKS mocks,
 // counted in the database per user and enforced on the server when a mock is created.
 //
 // A mock counts while it is generating (so starting several at once can't get past the

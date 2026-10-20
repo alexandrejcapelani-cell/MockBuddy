@@ -1,4 +1,5 @@
 import type { BillingTier } from "../ai/pricing.ts";
+import type { QuestionFormat } from "./format.ts";
 import type { GeneratedQuestion, Level, QuestionType } from "../schemas.ts";
 
 // Shapes stored in jsonb columns by the generation pipeline (stage C).
@@ -7,7 +8,10 @@ export type ExamDifficulty = "easier" | "same" | "harder";
 
 /** One question to write: what type, for which section, from which chunk(s). */
 export interface PlanSlot {
-  /** 1-based. Top-up slots continue after the initial ones; questions are renumbered at the end. */
+  /**
+   * 1-based. Top-up slots continue after the initial ones; at the end, questions are
+   * renumbered by paper position (a top-up in its replaced slot's place: paperPositions).
+   */
   ordinal: number;
   type: QuestionType;
   sectionName: string;
@@ -26,6 +30,8 @@ export interface PlanSlot {
 export interface ExamPlan {
   version: 1;
   slots: PlanSlot[];
+  /** The question-format control's setting; plans from before it existed are "mixed". */
+  format?: QuestionFormat;
 }
 
 export type BatchStage = "draft" | "draft_retry" | "critique" | "revise" | "done" | "failed";

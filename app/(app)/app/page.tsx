@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
 import { QUESTION_TYPE_NAMES } from "@/lib/blueprint/rules";
+import { sampleMix } from "@/lib/generation/format";
 import { freeMocksLeft } from "@/lib/generation/quota";
 import { listMaterials, materialTotals } from "@/lib/materials";
 import { listSubjects } from "@/lib/subjects";
@@ -160,7 +161,13 @@ async function SubjectTable({ subjectId, subjectName, freeMocksLeft }: { subject
         <h2 id="stakes-heading" className="sr-only">
           Deal a mock
         </h2>
-        <GenerateForm subjectId={subjectId} ready={readiness === null} reason={readiness} freeMocksLeft={freeMocksLeft} />
+        <GenerateForm
+          subjectId={subjectId}
+          ready={readiness === null}
+          reason={readiness}
+          freeMocksLeft={freeMocksLeft}
+          mix={sampleMix(blueprint?.spec.sections ?? [])}
+        />
       </section>
     </section>
   );

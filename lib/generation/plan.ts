@@ -46,7 +46,7 @@ export interface ChunkPick {
 /**
  * Picks `count` chunks: grouped by topic label, then round-robin across topics so that
  * consecutive picks come from different parts of the material. The seed offsets the
- * starting topic and the order within each topic, so a regenerated exam draws a different
+ * starting topic and the order within each topic, so the next mock draws a different
  * slice. Chunks in `avoid` (already used) only come after every fresh chunk; if there are
  * fewer chunks than needed, the sequence repeats.
  */
@@ -152,6 +152,25 @@ export function slotFor(ordinal: number, section: BlueprintSection, pick: ChunkP
     topicLabel: pick.primary.topicLabel,
     replacesSlot,
   };
+}
+
+/**
+ * Where each slot's question sits in the paper, by slot ordinal: an initial slot keeps its
+ * own place and a top-up takes the place of the slot it replaces (following replacements of
+ * replacements). Questions stream in by these places, so one doesn't move when a
+ * replacement lands; finalizing numbers the questions in this order.
+ */
+export function paperPositions(slots: PlanSlot[]): Map<number, number> {
+  const byOrdinal = new Map(slots.map((slot) => [slot.ordinal, slot]));
+  const positions = new Map<number, number>();
+  for (const slot of slots) {
+    let at = slot;
+    for (let hops = 0; at.replacesSlot !== null && byOrdinal.has(at.replacesSlot) && hops < slots.length; hops++) {
+      at = byOrdinal.get(at.replacesSlot)!;
+    }
+    positions.set(slot.ordinal, at.ordinal);
+  }
+  return positions;
 }
 
 /** Slot ordinals grouped into batches of BATCH_SIZE, in order. */

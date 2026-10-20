@@ -19,7 +19,7 @@ topic labels, `gemini-3.8-flash` for everything else; see `MODELS` in `lib/ai/co
   confirmation email) and lead to `/app`. Everything else needs a login.
 - On `/app`, add a subject (the main feature: one text field and a button). Its material,
   sample exam, mocks and history belong to it.
-- Every account gets 2 free mocks (new or regenerated), enforced on the server.
+- Every account gets 2 free mocks, enforced on the server.
 - Each user sees only their own data: row level security on every table and on Storage,
   and the server checks ownership on every request.
 
@@ -37,7 +37,8 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. Costs show as "free tier" unless you set `GEMINI_TIER=paid`.
+Open http://localhost:3000. Costs show as "free tier" unless `GEMINI_TIER=paid` is set
+(in `.env.local` and in Vercel).
 Batches run in parallel (for a key with billing); on a free-tier key, set `BATCH_MODE` in
 `lib/ai/config.ts` to `"sequential"`. Don't run `npm run build` while `npm run dev` is
 running: they share `.next`.
@@ -46,10 +47,14 @@ running: they share `.next`.
 2. **Your material**: slide PDFs, TXT or Markdown. Each is split into chunks and labelled
    by topic. `/debug/chunks` shows every chunk and its label.
 3. **Your sample exam**: one past exam or mock. `/blueprint` shows what was learned from it.
-4. **Generate a mock**: 5–20 questions and a difficulty. Uses one free mock.
+4. **Generate a mock**: 5–20 questions, a difficulty and a format (MCQ only, open-ended
+   only, or mixed like the sample), then pull the lever. Uses one free mock. Each new mock
+   avoids the questions of the subject's earlier ones.
 5. **Take it**: one question at a time, marked as you answer, with an explanation for every
-   option.
-6. **Results**: score, accuracy by topic (HOT and COLD), and REGENERATE.
+   option. You can start once the first 5 questions are ready; the rest arrive while you
+   answer.
+6. **Results**: score and accuracy by topic (HOT and COLD), then back to the table for
+   another pull.
 
 ## Scripts
 

@@ -142,7 +142,7 @@ export const exams = pgTable(
     blueprintId: uuid("blueprint_id")
       .notNull()
       .references(() => blueprints.id, { onDelete: "cascade" }),
-    /** The exam this one regenerates; its question stems are excluded and its chunks ranked last. */
+    /** The subject's previous mock, which this one follows on from: its question stems are excluded and its chunks ranked last. */
     parentExamId: uuid("parent_exam_id").references((): AnyPgColumn => exams.id, { onDelete: "set null" }),
     questionCount: integer("question_count").notNull(),
     difficulty: examDifficulty("difficulty").notNull(),

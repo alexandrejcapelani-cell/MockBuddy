@@ -48,13 +48,14 @@ never weaken it). Where this section and older ones disagree, this one wins.
   key plumbing are gone (the grading contract forbids AI keys in the frontend). The server
   uses `GEMINI_API_KEY` only; errors are worded for students (a key problem is "on our
   side"), with HTTP codes kept to the server log.
-- **Free-mock quota: 2 per account**, counting new and regenerated mocks
+- **Free-mock quota: 2 per account**, counting every mock pulled
   (`lib/generation/quota.ts`, `lib/free-mocks.ts`). Enforced on the server when a mock is
   created, inside a transaction holding a per-user advisory lock, so parallel requests
   can't both take the last one. A mock counts while it is generating and once it finished
   with at least one question; one that ended with no questions doesn't use a free mock.
-  With none left, `/app` and the results page show a friendly note instead of the lever
-  and the Regenerate button; everything else keeps working. (CHANGES.md says "count
+  With none left, `/app` shows a friendly note instead of the lever (the Regenerate
+  button this mentioned is gone: see "New mocks come from the lever"); everything else
+  keeps working. (CHANGES.md says "count
   completed generations"; counting ones in progress too is what stops parallel starts
   from getting past the limit.)
 - **Vercel limits.** Hobby with Fluid compute (on by default) allows 300 s per function,
@@ -74,7 +75,7 @@ never weaken it). Where this section and older ones disagree, this one wins.
   nothing, and gets 404 from every page and API route for the first user's exam or subject
   ids → signed out, every page redirects to `/login` and every API route answers 401. Also
   uploads through signed Storage URLs, labelling, a blueprint, a full mock, the quota
-  (2nd mock allowed, 3rd and Regenerate refused with the note), and 375 px with no
+  (2nd mock allowed, 3rd refused with the note), and 375 px with no
   sideways scrolling. **Not verified until the real project exists:** real Supabase Auth
   and Storage behaviour, the publishable key against the Data API, Vercel.
 
@@ -297,11 +298,73 @@ never weaken it). Where this section and older ones disagree, this one wins.
   and `stripOptionLabels` (lib/generation/validate.ts) removes consistent labels when a
   question is saved. The next run had none.
 
-## Regeneration
+## New mocks come from the lever (2026-10-20)
 
-- New exam row, new seed, empty `used_chunk_ids`, `parent_exam_id` pointing at the
-  previous exam. Chunks used anywhere in the parent chain are ranked last; stems from the
-  whole chain are excluded.
+- **REGENERATE is gone** (`/api/regenerate` and its button). The results page links back
+  to the slot machine floor (`/app?subject=…`, "Back to the table"); pulling the lever there
+  is the only way to generate a mock, so count, difficulty and format are always chosen.
+- What regeneration did is kept for every pull: a new mock's `parent_exam_id` is the
+  subject's latest mock that has questions, so generation excludes every question stem in
+  that chain (up to 5 mocks back) and ranks the chain's used chunks last. New exam row, new
+  seed, empty `used_chunk_ids`. A mock that ended with no questions is skipped as a parent.
+- The blueprint is the subject's active one (the newest sample exam), not the parent's.
+
+## Question format (2026-10-20)
+
+- A third control beside count and difficulty: **MCQ only / Open-ended / Mixed** (default).
+  Both difficulty and format use one switch component (`components/lever-switch.tsx`): a
+  recessed slot with a sliding gold knob over a real radio group, so arrow keys, focus
+  rings and screen readers work as for any radio buttons.
+- The plan respects it (`lib/generation/format.ts`, stored as `exams.plan.format`, no
+  migration: the plan is jsonb). Mixed plans from the sample's sections as before. MCQ
+  only plans from the sample's multiple-choice sections, open-ended only from its short
+  answer and numerical ones, keeping their style notes, marks and relative shares. If the
+  sample has none of the wanted kind, one stand-in section in the paper's tone is used, so
+  any format can be pulled from any sample.
+- Open-ended questions are short answers marked against their rubric (and calculations
+  marked by the number), as before. "Open-ended" includes numerical questions because
+  both are typed answers; the sample decides the split between them.
+- The note under the switch says what the choice means for this sample ("about 6 in 10
+  multiple choice, the rest written").
+- Checked: a 15-question Mixed mock came out 8 MCQ, 5 short, 2 numerical against a
+  sample of 56 / 33 / 11 %; a 10-question open-ended plan was 7 short and 3 numerical.
+
+## Streaming questions into the exam (CHANGES.md 2.6, 2026-10-20)
+
+- **Questions can be answered as soon as their batch is saved.** Once the first batch
+  lands, the spin screen shows **Start answering**; the exam page then carries the run on
+  (`lib/generation/use-generation-run.ts`, the same hook the spin screen uses) and reads
+  the questions again each time a batch finishes (`GET /api/exams/[id]/questions`, with
+  the key hidden until answered, as before). Generation is driven from the browser, so
+  whichever screen is open drives it; leaving a screen cancels its run (an AbortSignal on
+  the runner) and the next one carries on from the database. A stage still running on the
+  server for the closed screen finishes and is saved; the new run waits for it (409 busy).
+- **Numbers don't move.** While generating, a question shows its paper position: its slot,
+  or for a replacement the slot it replaces (`paperPositions` in `lib/generation/plan.ts`).
+  Places not dealt yet are face-down cards. Finalizing numbers the questions in that same
+  order, so nothing renumbers unless the mock ends short. The card being answered stays
+  selected when new ones arrive (merged by id, `mergeDealt` in `lib/exam/view.ts`).
+- Answers are accepted while the mock generates. It is marked graded only once it's
+  finished and every question is answered (finalizing checks this too). Results open
+  once the mock is finished; until then the results URL redirects to the exam.
+- On the exam page a timeout or error shows the same panel as the spin screen (Retry,
+  Finish with the N ready, Resume), and answering carries on meanwhile.
+- **Measured** (15 questions, Mixed, paid key, stand-in Supabase, 3 batches in parallel):
+
+  | Batch | Draft | Critique | Revise | Saved at |
+  | --- | --- | --- | --- | --- |
+  | 1 | 19.2 s | 12.9 s | (none) | 35 s |
+  | 2 | 20.9 s | 21.2 s | (none) | 45 s |
+  | 3 | 26.9 s | 71.5 s | 48.1 s | 151 s |
+
+  The first 5 questions were answerable 35 s after the pull, and 10 after 45 s; the whole
+  mock took 151 s. 15/15 kept, 1 revised, 0 rate limits, about $0.17. Every call logged
+  `billingTier: "paid"`.
+- **Still to decide: critique and revise at "medium" thinking.** Batch 3's critique used
+  9.7k thinking tokens and took 71.5 s, and its revise 48 s: both over the 40 s per-call
+  target, and together they put the run at 151 of its 180 s. Streaming means the student
+  isn't waiting on it, but a slower day would hit the ceiling and need Retry. CHANGES.md
+  2.6 suggests a faster model or lower thinking for the critique; not changed here.
 
 ## Sample exam
 
@@ -366,13 +429,8 @@ Each lands in its own reviewed migration when the phase that needs it starts.
   topics have different accuracies; ties share the flag.
 - On the results page an unanswered question keeps its answer hidden, with a link back to
   answer it.
-- REGENERATE (`POST /api/regenerate`) creates a new exam from the original exam's
-  blueprint (the same sample exam, even if a newer one has been uploaded since), the
-  material as it is now, the same count and difficulty, and a new seed. It links to the
-  previous exam through `parent_exam_id`, so generation excludes every question stem in
-  the chain (up to 5 exams back) and ranks the chain's used chunks last; the new exam's
-  own `used_chunk_ids` starts empty. Generation then runs on the generation page like any
-  other mock.
+- The REGENERATE button that was here is replaced by a link back to the table; see "New
+  mocks come from the lever".
 
 ## History (phase 6)
 

@@ -3,11 +3,13 @@ import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { CallMetrics } from "@/lib/ai/call";
 import { db } from "@/lib/db";
 import { answers, chunks, exams, questions } from "@/lib/db/schema";
+import { paperPositions } from "@/lib/generation/plan";
 import { gradeAnswer } from "@/lib/grading/grade";
 import { RequestError } from "@/lib/http";
 import { type QuestionView, toQuestionView } from "./view";
 
-// Taking the exam (screen 3) and storing answers.
+// Taking the exam (screen 3) and storing answers. Questions can be answered as soon as their
+// batch is saved, while later batches still generate.
 
 export type ExamRow = typeof exams.$inferSelect;
 
@@ -18,10 +20,21 @@ export interface ExamForTaking {
   questions: QuestionView[];
 }
 
+/**
+ * The number a question shows. While the mock generates, that's its paper position (a top-up
+ * in the place of the question it replaces), the order finalizing will number them in.
+ */
+function displayOrdinal(exam: ExamRow): (ordinal: number) => number {
+  if (exam.status !== "generating") return (ordinal) => ordinal;
+  const positions = paperPositions(exam.plan.slots);
+  return (ordinal) => positions.get(ordinal) ?? ordinal;
+}
+
 export async function loadExamForTaking(examId: string): Promise<ExamForTaking> {
   const [exam] = await db().select().from(exams).where(eq(exams.id, examId));
   if (!exam) throw new RequestError("That exam doesn't exist.", 404);
   const rows = await db().select().from(questions).where(eq(questions.examId, examId)).orderBy(asc(questions.ordinal));
+  const numbered = displayOrdinal(exam);
   const given = await db().select().from(answers).where(eq(answers.examId, examId));
   const sections = rows.length
     ? await db()
@@ -33,7 +46,9 @@ export async function loadExamForTaking(examId: string): Promise<ExamForTaking> 
   const answerOf = new Map(given.map((a) => [a.questionId, a]));
   return {
     exam,
-    questions: rows.map((q) => toQuestionView(q, answerOf.get(q.id) ?? null, sectionOf.get(q.sourceChunkId) ?? null)),
+    questions: rows
+      .map((q) => ({ ...toQuestionView(q, answerOf.get(q.id) ?? null, sectionOf.get(q.sourceChunkId) ?? null), ordinal: numbered(q.ordinal) }))
+      .sort((a, b) => a.ordinal - b.ordinal),
   };
 }
 
@@ -56,7 +71,6 @@ export async function submitAnswer(input: {
 }): Promise<SubmittedAnswer> {
   const [exam] = await db().select().from(exams).where(eq(exams.id, input.examId));
   if (!exam) throw new RequestError("That exam doesn't exist.", 404);
-  if (exam.status === "generating") throw new RequestError("This exam is still being generated.", 409);
 
   const [question] = await db()
     .select()
@@ -86,13 +100,20 @@ export async function submitAnswer(input: {
 
   const [{ answered }] = await db().select({ answered: count() }).from(answers).where(eq(answers.examId, input.examId));
   const [{ total }] = await db().select({ total: count() }).from(questions).where(eq(questions.examId, input.examId));
-  if (answered === total && exam.status !== "graded") {
-    await db().update(exams).set({ status: "graded" }).where(eq(exams.id, input.examId));
+  // Only a finished mock can be fully answered; while it generates, more questions are coming
+  // (finalizing marks it graded if they were all answered by then). The condition is checked
+  // again in the update, in case it finalized meanwhile.
+  if (answered === total) {
+    await db()
+      .update(exams)
+      .set({ status: "graded" })
+      .where(and(eq(exams.id, input.examId), eq(exams.status, "ready")));
   }
 
   const [stored] = await db().select().from(answers).where(eq(answers.questionId, question.id));
   const [section] = await db().select({ label: chunks.sectionLabel }).from(chunks).where(eq(chunks.id, question.sourceChunkId));
-  return { question: toQuestionView(question, stored, section?.label ?? null), answered, total, calls };
+  const view = toQuestionView(question, stored, section?.label ?? null);
+  return { question: { ...view, ordinal: displayOrdinal(exam)(question.ordinal) }, answered, total, calls };
 }
 
 function validResponse(question: typeof questions.$inferSelect, response: string): string {

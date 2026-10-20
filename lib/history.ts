@@ -20,7 +20,6 @@ export interface HistoryRow {
   score: number | null;
   /** The COLD topic(s); empty when nothing is answered or there's no spread between topics. */
   weakest: string[];
-  regenerated: boolean;
 }
 
 export async function listHistory(userId: string): Promise<HistoryRow[]> {
@@ -31,7 +30,6 @@ export async function listHistory(userId: string): Promise<HistoryRow[]> {
       questionCount: exams.questionCount,
       difficulty: exams.difficulty,
       status: exams.status,
-      parentExamId: exams.parentExamId,
       subject: subjects.name,
     })
     .from(exams)
@@ -63,7 +61,6 @@ export async function listHistory(userId: string): Promise<HistoryRow[]> {
       answered: results.answered,
       score: results.answered > 0 ? results.percent : null,
       weakest: results.topics.filter((topic) => topic.flag === "COLD").map((topic) => topic.topic),
-      regenerated: row.parentExamId !== null,
     };
   });
 }

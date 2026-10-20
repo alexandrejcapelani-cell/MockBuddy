@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { BlueprintSection } from "../schemas.ts";
-import { allocateSections, batchOrdinals, buildPlan, type PlannableChunk, selectChunks } from "./plan.ts";
+import { allocateSections, batchOrdinals, buildPlan, paperPositions, type PlannableChunk, selectChunks, slotFor } from "./plan.ts";
 
 const section = (name: string, question_type: BlueprintSection["question_type"], proportion: number): BlueprintSection => ({
   name,
@@ -100,4 +100,13 @@ test("buildPlan assigns every slot a section, chunk and topic, and batches them 
   assert.ok(plan.slots.every((s) => s.secondaryChunkId === null && s.replacesSlot === null));
   assert.equal(plan.slots.filter((s) => s.type === "mcq").length, 12);
   assert.deepEqual(batchOrdinals(plan.slots).map((b) => b.length), [5, 5, 5, 5]);
+});
+
+test("paperPositions puts a top-up in the place of the slot it replaces, through chains", () => {
+  const section: BlueprintSection = { name: "A", question_type: "mcq", proportion: 1, marks_each: 2, style_notes: "", observed_difficulty: "medium" };
+  const pick = { primary: { id: "c", topicLabel: "T", materialOrder: 0, ordinal: 0 }, secondary: null };
+  const slots = [1, 2, 3, 4, 5].map((n) => slotFor(n, section, pick, null));
+  // Slot 2 dropped → top-up 6; slot 4 dropped → top-up 7, which dropped too → top-up 8.
+  slots.push(slotFor(6, section, pick, 2), slotFor(7, section, pick, 4), slotFor(8, section, pick, 7));
+  assert.deepEqual([...paperPositions(slots)], [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 2], [7, 4], [8, 4]]);
 });

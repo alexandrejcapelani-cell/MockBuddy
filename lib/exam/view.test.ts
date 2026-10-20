@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { questionState, toQuestionView } from "./view.ts";
+import { mergeDealt, questionState, toQuestionView } from "./view.ts";
 
 const question = {
   id: "q1",
@@ -49,4 +49,15 @@ test("an answered question reveals the key, every explanation and its source", (
   assert.equal(view.reveal?.correctOption, 1);
   assert.equal(view.reveal?.sourceSection, "pp. 6–7");
   assert.equal(questionState(view), "wrong");
+});
+
+test("mergeDealt adds streamed questions in paper order and keeps answers the page already has", () => {
+  const answer = { id: "a1", examId: "e1", questionId: "q1", response: "1", isCorrect: true, awardedMarks: 2, feedback: null, rubricMarks: null, answeredAt: new Date() };
+  const answered = toQuestionView(question, answer, null);
+  const stale = toQuestionView(question, null, null);
+  const later = toQuestionView({ ...question, id: "q7", ordinal: 7 }, null, null);
+  const early = toQuestionView({ ...question, id: "q3", ordinal: 3 }, null, null);
+  const merged = mergeDealt([answered, later], [{ ...stale, ordinal: 1 }, early, later]);
+  assert.deepEqual(merged.map((view) => view.id), ["q1", "q3", "q7"]);
+  assert.ok(merged[0].answer, "the answer saved on this page survives a list read before it");
 });

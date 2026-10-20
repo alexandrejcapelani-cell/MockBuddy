@@ -66,7 +66,6 @@ export default async function HistoryPage() {
                       <tr key={row.examId} className="border-b border-gold/30 last:border-b-0">
                         <th scope="row" className="px-3 py-2 text-left font-semibold whitespace-nowrap">
                           {DATE.format(row.createdAt)}
-                          {row.regenerated && <span className="block text-xs font-normal text-dim">regenerated</span>}
                         </th>
                         <td className="px-3 py-2 [overflow-wrap:anywhere]">{row.subject}</td>
                         <td className="px-3 py-2 text-right tabular">

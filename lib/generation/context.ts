@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { blueprints, chunks, exams, generationBatches, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
 import type { ExamContext, SlotWithSources } from "./prompts";
+import type { QuestionFormat } from "./format";
 import { runMsLeft } from "./run-limit";
 import type { PlanSlot, StageMetrics } from "./types";
 
@@ -14,7 +15,7 @@ export type BatchRow = typeof generationBatches.$inferSelect;
 
 const MAX_EXCLUDED_STEMS = 60;
 const MAX_STEM_CHARS = 300;
-/** How far back a regeneration chain is followed for excluded stems and used chunks. */
+/** How far back a subject's chain of mocks is followed for excluded stems and used chunks. */
 const MAX_CHAIN_DEPTH = 5;
 
 export async function loadExam(examId: string): Promise<ExamRow> {
@@ -45,7 +46,7 @@ export async function slotsWithSources(slots: PlanSlot[]): Promise<SlotWithSourc
   });
 }
 
-/** Ids of the exam's ancestors in its regeneration chain, nearest first. */
+/** Ids of the exam's ancestors in its chain of mocks, nearest first. */
 export async function ancestorExamIds(exam: ExamRow): Promise<string[]> {
   const ids: string[] = [];
   let parentId = exam.parentExamId;
@@ -59,7 +60,7 @@ export async function ancestorExamIds(exam: ExamRow): Promise<string[]> {
 
 /**
  * Question stems every new question must stay clear of: the sample exam's questions
- * (always), stems from earlier exams in the regeneration chain, and this exam's own
+ * (always), stems from earlier exams in the chain of mocks, and this exam's own
  * accepted questions.
  */
 export async function excludedStems(exam: ExamRow, context: ExamContext): Promise<string[]> {
@@ -104,6 +105,7 @@ export interface ExamProgress {
   status: ExamRow["status"];
   questionCount: number;
   difficulty: ExamRow["difficulty"];
+  format: QuestionFormat;
   generated: number;
   /** Time left in the current run, measured on the server, so the browser's clock doesn't matter. */
   runMsLeft: number;
@@ -123,6 +125,7 @@ export async function examProgress(examId: string): Promise<ExamProgress> {
     status: exam.status,
     questionCount: exam.questionCount,
     difficulty: exam.difficulty,
+    format: exam.plan.format ?? "mixed",
     generated,
     runMsLeft: exam.status === "generating" ? runMsLeft(exam) : 0,
     batches: batches.map((batch) => batchView(batch, exam.plan)),

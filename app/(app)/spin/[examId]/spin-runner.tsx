@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { RunTrouble } from "@/components/run-trouble";
 import { SlotMachine } from "@/components/slot-machine";
 import { BATCH_MODE, PARALLEL_BATCHES } from "@/lib/ai/config";
 import { formatCost } from "@/lib/ai/pricing";
 import type { BatchView, ExamProgress } from "@/lib/generation/context";
-import { fetchProgress, type GenerationResult, GenerationTimedOut, runGeneration } from "@/lib/generation/runner";
-import { RUN_LIMIT_MINUTES, RunTimedOutError } from "@/lib/generation/run-limit";
-import { postJson } from "@/lib/upload-client";
+import type { GenerationResult } from "@/lib/generation/runner";
+import { type RunPhase, useGenerationRun } from "@/lib/generation/use-generation-run";
 
 const STAGE_TEXT: Record<BatchView["stage"], string> = {
   draft: "drafting",
@@ -20,101 +20,17 @@ const STAGE_TEXT: Record<BatchView["stage"], string> = {
   failed: "failed",
 };
 
-type Phase = "batches" | "topup" | "finalizing" | "done" | "error" | "timed_out";
-
 /**
- * Screen 2. Starts generating on load (a first mock and a regenerated one alike) and plays
- * the slot machine from batch progress. The machine is decorative: the exam is linked the
- * moment generation finishes, whatever the reels are doing.
+ * Screen 2. Starts generating on load and plays the slot machine from batch progress. The
+ * machine is decorative: as soon as the first batch is saved the student can start
+ * answering (the exam page carries the run on), and the exam is linked the moment
+ * generation finishes, whatever the reels are doing.
  */
 export function SpinRunner({ initial }: { initial: ExamProgress }) {
   const router = useRouter();
-  // Opened (or reloaded) after the run's time ran out: offer Retry rather than starting again.
-  const alreadyTimedOut = initial.status === "generating" && initial.runMsLeft <= 0;
-  const [batches, setBatches] = useState<Map<number, BatchView>>(() => new Map(initial.batches.map((b) => [b.batchIndex, b])));
-  const [completionOrder, setCompletionOrder] = useState<number[]>(() =>
-    initial.batches.filter((b) => b.stage === "done" || b.stage === "failed").map((b) => b.batchIndex),
-  );
-  const [phase, setPhase] = useState<Phase>(initial.status !== "generating" ? "done" : alreadyTimedOut ? "timed_out" : "batches");
-  const [timeoutMessage, setTimeoutMessage] = useState<string | null>(alreadyTimedOut ? new RunTimedOutError().message : null);
-  const [ready, setReady] = useState(initial.generated);
-  const [acting, setActing] = useState(false);
-  const [result, setResult] = useState<GenerationResult | null>(
-    initial.status === "generating"
-      ? null
-      : { requested: initial.questionCount, generated: initial.generated, short: Math.max(0, initial.questionCount - initial.generated) },
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [finishedAt, setFinishedAt] = useState<number | null>(null);
+  const run = useGenerationRun(initial);
+  const { batches, completionOrder, phase, result, startedAt, finishedAt } = run;
   const [now, setNow] = useState(() => Date.now());
-  const started = useRef(false);
-
-  const onBatch = useCallback((batch: BatchView) => {
-    setBatches((current) => new Map(current).set(batch.batchIndex, batch));
-    if (batch.stage === "done" || batch.stage === "failed") {
-      setCompletionOrder((order) => (order.includes(batch.batchIndex) ? order : [...order, batch.batchIndex]));
-    }
-  }, []);
-
-  const run = useCallback(
-    async (progress?: ExamProgress) => {
-      setError(null);
-      setTimeoutMessage(null);
-      setPhase("batches");
-      setStartedAt(Date.now());
-      setFinishedAt(null);
-      try {
-        setResult(await runGeneration(initial.examId, { onBatch, onPhase: setPhase }, progress));
-        setPhase("done");
-      } catch (caught) {
-        if (caught instanceof GenerationTimedOut) {
-          setTimeoutMessage(caught.message);
-          setPhase("timed_out");
-          // How many questions finished batches already saved.
-          const latest = await fetchProgress(initial.examId).catch(() => null);
-          if (latest) setReady(latest.generated);
-        } else {
-          setError((caught as Error).message);
-          setPhase("error");
-        }
-      } finally {
-        setFinishedAt(Date.now());
-      }
-    },
-    [initial.examId, onBatch],
-  );
-
-  /** A fresh run for the same mock, carrying on from where it stopped. */
-  async function retry() {
-    setActing(true);
-    const restarted = await postJson<ExamProgress>(`/api/exams/${initial.examId}/retry`, {});
-    setActing(false);
-    if (!restarted.ok) {
-      setTimeoutMessage(`Couldn't restart: ${restarted.error}`);
-      return;
-    }
-    void run(restarted.data);
-  }
-
-  /** End the run with the questions that are ready, and go and take them. */
-  async function keepReady() {
-    setActing(true);
-    const stopped = await postJson<GenerationResult>(`/api/exams/${initial.examId}/stop`, {});
-    setActing(false);
-    if (!stopped.ok) {
-      setTimeoutMessage(stopped.error);
-      return;
-    }
-    router.push(`/exam/${initial.examId}`);
-  }
-
-  useEffect(() => {
-    // The ref keeps React's development double-mount from starting two runs.
-    if (started.current || initial.status !== "generating" || alreadyTimedOut) return;
-    started.current = true;
-    void run();
-  }, [initial.status, alreadyTimedOut, run]);
 
   useEffect(() => {
     if (phase === "done" || phase === "error" || phase === "timed_out") return;
@@ -164,39 +80,23 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
           replacements ran out.
         </p>
       )}
-      {error && (
-        <div role="alert" className="panel space-y-3 p-4 text-center">
-          <p className="text-error">{error}</p>
-          <button type="button" className="btn-gold" onClick={() => void run()}>
-            Resume generation
-          </button>
+      {run.ready > 0 && phase !== "done" && phase !== "timed_out" && (
+        <div className="flex flex-col items-center gap-2 text-center">
+          <Link href={`/exam/${initial.examId}`} className="btn-gold text-lg no-underline">
+            Start answering
+          </Link>
+          <p className="text-sm text-dim tabular">
+            {run.ready} of {initial.questionCount} questions ready. The rest keep coming while you play.
+          </p>
         </div>
       )}
 
-      {phase === "timed_out" && (
-        <div role="alert" className="panel space-y-4 p-5 text-center">
-          <p className="text-lg font-semibold text-cream">{timeoutMessage}</p>
-          <p className="text-cream">
-            {ready > 0
-              ? `${ready} of ${initial.questionCount} questions are ready and kept.`
-              : "No questions were finished yet."}
-          </p>
-          <div className="flex flex-wrap justify-center gap-3">
-            <button type="button" className="btn-gold" disabled={acting} onClick={() => void retry()}>
-              Retry
-            </button>
-            {ready > 0 && (
-              <button type="button" className="btn-quiet" disabled={acting} onClick={() => void keepReady()}>
-                Take the {ready} ready question{ready === 1 ? "" : "s"}
-              </button>
-            )}
-          </div>
-          <p className="text-sm text-dim">
-            Retry carries on from where it stopped, with another {RUN_LIMIT_MINUTES} minutes. It doesn&rsquo;t use another free
-            mock.
-          </p>
-        </div>
-      )}
+      <RunTrouble
+        run={run}
+        questionCount={initial.questionCount}
+        keepLabel={(ready) => `Take the ${ready} ready question${ready === 1 ? "" : "s"}`}
+        onKept={() => router.push(`/exam/${initial.examId}`)}
+      />
 
       {phase === "done" && result && result.generated > 0 && (
         <p className="flex flex-wrap items-center justify-center gap-5">
@@ -256,7 +156,7 @@ export function SpinRunner({ initial }: { initial: ExamProgress }) {
   );
 }
 
-function statusLine(phase: Phase, batches: BatchView[], result: GenerationResult | null): string {
+function statusLine(phase: RunPhase, batches: BatchView[], result: GenerationResult | null): string {
   if (phase === "done" && result) return result.generated > 0 ? `JACKPOT — ${result.generated} questions ready` : "No questions survived the checks";
   if (phase === "error") return "The dealer stopped. See below.";
   if (phase === "timed_out") return "Time's up at this table";

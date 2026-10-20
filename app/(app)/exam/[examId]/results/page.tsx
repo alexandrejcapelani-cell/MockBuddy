@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { ownsExam } from "@/lib/ownership";
@@ -11,11 +11,10 @@ import { loadExamForTaking } from "@/lib/exam/taking";
 import { DIFFICULTY_NAMES } from "@/lib/generation/difficulty";
 import { RequestError } from "@/lib/http";
 import { freeMocksLeft } from "@/lib/generation/quota";
-import { RegenerateButton } from "./regenerate-button";
 
 export const dynamic = "force-dynamic";
 
-/** Screen 4, the payout: the score, the topic board, REGENERATE and every question reviewed. */
+/** Screen 4, the payout: the score, the topic board and every question reviewed, then back to the table. */
 export default async function ResultsPage({ params }: { params: Promise<{ examId: string }> }) {
   const { examId } = await params;
   const user = await requireUser();
@@ -24,6 +23,8 @@ export default async function ResultsPage({ params }: { params: Promise<{ examId
     if (error instanceof RequestError && error.status === 404) notFound();
     throw error;
   });
+  // Results are for a finished mock; while it generates, the exam page is where it's played.
+  if (exam.status === "generating") redirect(`/exam/${examId}`);
   const left = await freeMocksLeft(user.id);
   const results = computeResults(questions);
   const unanswered = results.total - results.answered;
@@ -116,7 +117,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ examId
         </p>
       </section>
 
-      <RegenerateButton examId={examId} freeMocksLeft={left} />
+      <BackToTable subjectId={exam.subjectId} freeMocksLeft={left} />
 
       <section aria-labelledby="review-heading" className="space-y-4">
         <h2 id="review-heading" className="text-2xl font-semibold">
@@ -145,7 +146,23 @@ export default async function ResultsPage({ params }: { params: Promise<{ examId
         </ol>
       </section>
 
-      <RegenerateButton examId={examId} freeMocksLeft={left} />
+      <BackToTable subjectId={exam.subjectId} freeMocksLeft={left} />
     </main>
+  );
+}
+
+/** The lever at the table is the only way to deal a new mock. */
+function BackToTable({ subjectId, freeMocksLeft }: { subjectId: string; freeMocksLeft: number }) {
+  return (
+    <div className="flex flex-col items-center gap-3 text-center">
+      <Link href={`/app?subject=${subjectId}`} className="btn-gold px-10 py-4 text-xl no-underline">
+        Back to the table
+      </Link>
+      <p className="max-w-md text-sm text-dim">
+        {freeMocksLeft > 0
+          ? `Pull the lever there for a new mock from the same material. It avoids every question you've had so far (${freeMocksLeft} free mock${freeMocksLeft === 1 ? "" : "s"} left).`
+          : "Your material, sample exam and past mocks are all there."}
+      </p>
+    </div>
   );
 }

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { ChipCascade } from "@/components/chip-cascade";
 import { MathText } from "@/components/math-text";
 import { OPTION_LETTERS, QuestionReveal, verdictText, verdictTone } from "@/components/question-reveal";
-import { type QuestionView, questionState } from "@/lib/exam/view";
+import { mergeDealt, type QuestionView, questionState } from "@/lib/exam/view";
 import { playWin } from "@/lib/sound";
 import { postJson } from "@/lib/upload-client";
 
@@ -19,21 +19,34 @@ const BANNER = {
 /**
  * Screen 3, the hand: one question at a time, dealt as a playing card. Answering marks it
  * at once; the card flips to the verdict and the explanation block opens underneath.
+ *
+ * While the mock is still generating (`dealing` is its question count), `questions` grows as
+ * batches are saved: new cards join in paper order, the rest show face down, and the card
+ * being answered stays put.
  */
-export function ExamTaker({ examId, initial }: { examId: string; initial: QuestionView[] }) {
-  const startIndex = Math.max(0, initial.findIndex((q) => !q.answer)); // only used as the initial state
-  const [views, setViews] = useState(initial);
-  const [index, setIndex] = useState(startIndex);
+export function ExamTaker({ examId, questions, dealing }: { examId: string; questions: QuestionView[]; dealing: number | null }) {
+  const [views, setViews] = useState(questions);
+  const [received, setReceived] = useState(questions);
+  if (questions !== received) {
+    setReceived(questions);
+    setViews((current) => mergeDealt(current, questions));
+  }
+  const [currentId, setCurrentId] = useState(() => (questions.find((q) => !q.answer) ?? questions[0]).id);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   // Which card animation runs: dealt in on arrival, flipped on answering, then none.
-  const [motion, setMotion] = useState<{ id: string; kind: "deal" | "flip" } | null>(() => ({ id: initial[startIndex]?.id ?? "", kind: "deal" }));
+  const [motion, setMotion] = useState<{ id: string; kind: "deal" | "flip" } | null>(() => ({ id: currentId, kind: "deal" }));
   const [celebrate, setCelebrate] = useState(0);
 
+  const index = Math.max(0, views.findIndex((q) => q.id === currentId));
   const view = views[index];
   const answered = views.filter((q) => q.answer).length;
+  const total = dealing ?? views.length;
+  // While dealing, every place in the paper: a dealt card, or a face-down one still coming.
+  const places = dealing === null ? views : Array.from({ length: dealing }, (_, i) => views.find((q) => q.ordinal === i + 1) ?? i + 1);
+  const moreComing = dealing !== null && index === views.length - 1;
 
   async function submit(response: string) {
     setPending(view.id);
@@ -47,7 +60,8 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
       setError(result.error);
       return;
     }
-    const graded = result.data.question;
+    // The card keeps the number it shows; the next list from the server settles numbering.
+    const graded = { ...result.data.question, ordinal: view.ordinal };
     setViews((current) => current.map((q) => (q.id === graded.id ? graded : q)));
     setAnnouncement(`Question ${graded.ordinal}: ${announce(graded)}`);
     setMotion({ id: graded.id, kind: "flip" });
@@ -58,7 +72,7 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
   }
 
   function go(to: number) {
-    setIndex(to);
+    setCurrentId(views[to].id);
     setError(null);
     setMotion({ id: views[to].id, kind: "deal" });
   }
@@ -69,7 +83,19 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
     <div className="space-y-6">
       <nav aria-label="Questions" className="space-y-2">
         <ol className="flex flex-wrap justify-center gap-2">
-          {views.map((q, i) => {
+          {places.map((q) => {
+            if (typeof q === "number") {
+              return (
+                <li key={`coming-${q}`}>
+                  <span
+                    aria-label={`Question ${q}, still being dealt`}
+                    role="img"
+                    className="card-back grid h-14 w-10 animate-pulse place-items-center rounded-md opacity-60 shadow-md motion-reduce:animate-none"
+                  />
+                </li>
+              );
+            }
+            const i = views.indexOf(q);
             const state = questionState(q);
             const face =
               state === "unanswered" ? "card-back text-felt-deep" : state === "correct" ? "bg-gold text-felt-deep border-2 border-chip-cream" : "bg-chip-grey text-cream border-2 border-chip-cream/60";
@@ -93,6 +119,7 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
         </ol>
         <p className="text-center text-sm text-dim tabular">
           {answered} of {views.length} answered
+          {dealing !== null && ` · ${dealing - views.length} still being dealt`}
         </p>
       </nav>
 
@@ -111,7 +138,7 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
             <div>
               <h2 id="question-heading" className="text-2xl font-bold text-card-ink">
                 Question {view.ordinal}
-                <span className="font-sans text-base font-medium text-card-ink-dim"> of {views.length}</span>
+                <span className="font-sans text-base font-medium text-card-ink-dim"> of {total}</span>
               </h2>
               <p className="text-sm text-card-ink-dim">{view.topicLabel}</p>
             </div>
@@ -227,9 +254,14 @@ export function ExamTaker({ examId, initial }: { examId: string; initial: Questi
         <button type="button" disabled={index === views.length - 1} onClick={() => go(index + 1)} className="btn-quiet">
           Next →
         </button>
-        <Link href={`/exam/${examId}/results`} className={answered === views.length ? "btn-gold ml-auto no-underline" : "ml-auto"}>
-          {answered === views.length ? "See the payout" : `See results (${views.length - answered} unanswered)`}
-        </Link>
+        {moreComing && <span className="text-sm text-dim">The next card is still being dealt.</span>}
+        {dealing === null ? (
+          <Link href={`/exam/${examId}/results`} className={answered === views.length ? "btn-gold ml-auto no-underline" : "ml-auto"}>
+            {answered === views.length ? "See the payout" : `See results (${views.length - answered} unanswered)`}
+          </Link>
+        ) : (
+          <span className="ml-auto text-sm text-dim">Results open once every card is dealt.</span>
+        )}
       </div>
     </div>
   );

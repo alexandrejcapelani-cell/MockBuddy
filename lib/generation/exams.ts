@@ -1,14 +1,15 @@
 import "server-only";
 import { randomInt } from "node:crypto";
-import { and, asc, eq, isNotNull, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, ne, notInArray, sql } from "drizzle-orm";
 import { activeBlueprint } from "@/lib/blueprint/extract-blueprint";
 import { db } from "@/lib/db";
-import { blueprints, chunks, exams, generationBatches, materials, questions } from "@/lib/db/schema";
+import { answers, blueprints, chunks, exams, generationBatches, materials, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
 import { ADMIN_TOPIC } from "@/lib/ingest/topic-labels";
 import type { BlueprintSection } from "@/lib/schemas";
-import { ancestorExamIds, loadExam } from "./context";
-import { BATCH_SIZE, batchOrdinals, buildPlan, type PlannableChunk, selectChunks, slotFor } from "./plan";
+import { ancestorExamIds } from "./context";
+import { type QuestionFormat, sectionsForFormat } from "./format";
+import { BATCH_SIZE, batchOrdinals, buildPlan, paperPositions, type PlannableChunk, selectChunks, slotFor } from "./plan";
 import { RunTimedOutError, runDeadline } from "./run-limit";
 import { FREE_MOCKS, FreeMocksUsedError, mocksUsed } from "./quota";
 import type { ExamDifficulty, PlanSlot } from "./types";
@@ -30,7 +31,8 @@ export async function createExam(input: {
   subjectId: string;
   questionCount: (typeof QUESTION_COUNTS)[number];
   difficulty: ExamDifficulty;
-  parentExamId?: string;
+  /** Which question types to plan: the sample's MCQ sections, its open-ended ones, or its mix. */
+  format: QuestionFormat;
   /** Defaults to the subject's active blueprint (its latest sample exam). */
   blueprintId?: string;
 }): Promise<{ examId: string; batches: number }> {
@@ -41,17 +43,20 @@ export async function createExam(input: {
   const pool = await plannableChunks(input.subjectId);
   if (pool.length === 0) throw new RequestError("Add some material first: there are no labelled chunks to write questions from.", 409);
 
-  const parent = input.parentExamId ? await loadExam(input.parentExamId) : null;
+  // Each new mock follows on from the subject's latest one: generation excludes every question
+  // stem in that chain and ranks the chunks it already used last, so mocks don't repeat.
+  const parent = await latestMockWithQuestions(input.subjectId);
   const avoid = new Set<string>(parent ? await chainUsedChunks(parent) : []);
   const seed = randomInt(1, 2 ** 31 - 1);
-  const plan = buildPlan({
-    sections: blueprint.spec.sections,
+  const built = buildPlan({
+    sections: sectionsForFormat(blueprint.spec.sections, input.format),
     chunks: pool,
     questionCount: input.questionCount,
     harder: input.difficulty === "harder",
     seed,
     avoidChunkIds: avoid,
   });
+  const plan = { ...built, format: input.format };
 
   const examId = await db().transaction(async (tx) => {
     // The real check: one at a time per user, so two requests can't both take the last free mock.
@@ -80,24 +85,15 @@ export async function createExam(input: {
   return { examId, batches: Math.ceil(plan.slots.length / BATCH_SIZE) };
 }
 
-/**
- * REGENERATE: a new exam from the same material and sample exam, with the same count and
- * difficulty but a new seed. Its parent link makes generation exclude every question stem
- * in the chain and rank the chunks the chain already used last.
- */
-export async function regenerateExam(examId: string): Promise<{ examId: string; batches: number }> {
-  const exam = await loadExam(examId);
-  if (exam.status === "generating") throw new RequestError("Wait for this mock to finish generating first.", 409);
-  const blueprint = await blueprintById(exam.blueprintId);
-  if (!blueprint) throw new RequestError("This mock's sample exam no longer exists.", 409);
-  return createExam({
-    userId: exam.userId,
-    subjectId: exam.subjectId,
-    questionCount: exam.questionCount as (typeof QUESTION_COUNTS)[number],
-    difficulty: exam.difficulty,
-    parentExamId: exam.id,
-    blueprintId: blueprint.id,
-  });
+/** The subject's newest mock that has any questions: the one a new mock should follow on from. */
+async function latestMockWithQuestions(subjectId: string) {
+  const [latest] = await db()
+    .select()
+    .from(exams)
+    .where(and(eq(exams.subjectId, subjectId), sql`exists (select 1 from ${questions} where ${questions.examId} = ${exams.id})`))
+    .orderBy(desc(exams.createdAt))
+    .limit(1);
+  return latest ?? null;
 }
 
 async function blueprintById(id: string) {
@@ -211,8 +207,10 @@ function sectionOf(slot: PlanSlot): BlueprintSection {
 }
 
 /**
- * Called once every batch has finished: renumbers the questions 1..n in plan order and
- * marks the exam ready. Returns how many questions it has and how many are missing.
+ * Called once every batch has finished: renumbers the questions 1..n by paper position (the
+ * order the student has been seeing them in while they streamed in) and marks the exam
+ * ready, or graded if every question was answered while it generated. Returns how many
+ * questions it has and how many are missing.
  */
 export async function finalizeExam(examId: string): Promise<{ requested: number; generated: number; short: number }> {
   return db().transaction(async (tx) => {
@@ -223,13 +221,18 @@ export async function finalizeExam(examId: string): Promise<{ requested: number;
       throw new RequestError("Some batches are still generating.", 409);
     }
     if (exam.status === "generating") {
+      const position = paperPositions(exam.plan.slots);
+      const at = (ordinal: number) => position.get(ordinal) ?? ordinal;
+      const rows = await tx.select({ id: questions.id, ordinal: questions.ordinal }).from(questions).where(eq(questions.examId, examId));
+      rows.sort((a, b) => at(a.ordinal) - at(b.ordinal) || a.ordinal - b.ordinal);
       // Two passes, because questions(exam_id, ordinal) is unique at every step.
       await tx.execute(sql`update questions set ordinal = -ordinal where exam_id = ${examId}`);
-      await tx.execute(sql`
-        update questions q set ordinal = r.n
-        from (select id, row_number() over (order by -ordinal) as n from questions where exam_id = ${examId}) r
-        where q.id = r.id`);
-      await tx.update(exams).set({ status: "ready" }).where(eq(exams.id, examId));
+      for (const [i, row] of rows.entries()) {
+        await tx.update(questions).set({ ordinal: i + 1 }).where(eq(questions.id, row.id));
+      }
+      const answered = await tx.$count(answers, eq(answers.examId, examId));
+      const done = rows.length > 0 && answered >= rows.length;
+      await tx.update(exams).set({ status: done ? "graded" : "ready" }).where(eq(exams.id, examId));
     }
     const generated = await tx.$count(questions, eq(questions.examId, examId));
     return { requested: exam.questionCount, generated, short: Math.max(0, exam.questionCount - generated) };

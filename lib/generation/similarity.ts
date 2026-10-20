@@ -1,5 +1,5 @@
 // The server-side word-overlap check: catches a new stem that repeats an existing one
-// (the sample exam's questions, earlier exams in a regeneration chain, or other questions
+// (the sample exam's questions, earlier exams in the subject's chain of mocks, or other questions
 // in this exam). No embeddings: 3-word shingles and the overlap coefficient.
 
 /** Stems scoring at or above this are treated as duplicates. */
