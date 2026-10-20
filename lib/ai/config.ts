@@ -12,6 +12,7 @@ export const MODELS = {
   draft: "gemini-3.8-flash",
   critique: "gemini-3.8-flash",
   revise: "gemini-3.8-flash",
+  repeatCheck: "gemini-3.8-flash",
   grading: "gemini-3.8-flash",
 } as const;
 
@@ -27,6 +28,8 @@ export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
  * Drafts, critique and revise use the lowest level gemini-3.8-flash allows. At medium a
  * 5-question draft took 95 to 160 s and a critique up to 72 s; at low the examiner caught
  * the same planted flaws as at medium (docs/DECISIONS.md, "Critique and revise at low").
+ * The repeat check (a batch's new questions against other batches' saved ones) is a narrow
+ * comparison, so it uses low too.
  */
 export const THINKING: Record<ModelTask, ThinkingLevel> = {
   topicLabels: "low",
@@ -34,6 +37,7 @@ export const THINKING: Record<ModelTask, ThinkingLevel> = {
   draft: "low",
   critique: "low",
   revise: "low",
+  repeatCheck: "low",
   grading: "medium",
 };
 
@@ -44,6 +48,7 @@ export const MAX_TOKENS: Record<ModelTask, number> = {
   draft: 32_000,
   critique: 16_000,
   revise: 24_000,
+  repeatCheck: 8_000,
   grading: 8_000,
 };
 

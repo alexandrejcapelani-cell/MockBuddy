@@ -3,6 +3,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { blueprints, chunks, exams, generationBatches, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
+import { excludedStemList, inFlightStems } from "./existing";
 import type { ExamContext, SlotWithSources } from "./prompts";
 import type { QuestionFormat } from "./format";
 import { runMsLeft } from "./run-limit";
@@ -13,8 +14,6 @@ import type { PlanSlot, StageMetrics } from "./types";
 export type ExamRow = typeof exams.$inferSelect;
 export type BatchRow = typeof generationBatches.$inferSelect;
 
-const MAX_EXCLUDED_STEMS = 60;
-const MAX_STEM_CHARS = 300;
 /** How far back a subject's chain of mocks is followed for excluded stems and used chunks. */
 const MAX_CHAIN_DEPTH = 5;
 
@@ -59,20 +58,35 @@ export async function ancestorExamIds(exam: ExamRow): Promise<string[]> {
 }
 
 /**
- * Question stems every new question must stay clear of: the sample exam's questions
- * (always), stems from earlier exams in the chain of mocks, and this exam's own
- * accepted questions.
+ * Question stems every new question in batch `batchIndex` must stay clear of: the sample
+ * exam's questions (always), this exam's accepted questions, the drafts its other batches
+ * are still working on, and stems from earlier exams in the chain of mocks.
  */
-export async function excludedStems(exam: ExamRow, context: ExamContext): Promise<string[]> {
+export async function excludedStems(exam: ExamRow, context: ExamContext, batchIndex: number): Promise<string[]> {
+  // The batches before the questions: a batch saves its questions before it is marked done,
+  // so one finishing between the two reads is still seen, as drafts or as questions.
+  const batches = await db()
+    .select({
+      batchIndex: generationBatches.batchIndex,
+      stage: generationBatches.stage,
+      drafts: generationBatches.drafts,
+      outcomes: generationBatches.outcomes,
+    })
+    .from(generationBatches)
+    .where(eq(generationBatches.examId, exam.id));
   const ancestors = await ancestorExamIds(exam);
-  const examIds = [exam.id, ...ancestors];
   const rows = await db()
-    .select({ prompt: questions.prompt })
+    .select({ examId: questions.examId, prompt: questions.prompt })
     .from(questions)
-    .where(inArray(questions.examId, examIds))
+    .where(inArray(questions.examId, [exam.id, ...ancestors]))
     .orderBy(asc(questions.ordinal));
-  const stems = [...context.sampleQuestions.map((sample) => sample.verbatim_text), ...rows.map((row) => row.prompt)];
-  return stems.slice(0, MAX_EXCLUDED_STEMS).map((stem) => (stem.length > MAX_STEM_CHARS ? `${stem.slice(0, MAX_STEM_CHARS)}…` : stem));
+  const stemsOf = (examId: string) => rows.filter((row) => row.examId === examId).map((row) => row.prompt);
+  return excludedStemList({
+    samples: context.sampleQuestions.map((sample) => sample.verbatim_text),
+    saved: stemsOf(exam.id),
+    inFlight: inFlightStems(batches, batchIndex),
+    earlierMocks: ancestors.flatMap(stemsOf),
+  });
 }
 
 export interface BatchView {

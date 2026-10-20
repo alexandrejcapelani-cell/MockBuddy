@@ -1,11 +1,11 @@
 import "server-only";
-import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { type CallMetrics, generateJson, ModelCallError, type PromptMessage, schemaText, withRetryNote } from "@/lib/ai/call";
 import { db } from "@/lib/db";
 import { exams, generationBatches, questions } from "@/lib/db/schema";
 import { RequestError } from "@/lib/http";
-import { CritiqueSchema, type CritiqueVerdict, type GeneratedQuestion, SlotQuestionsSchema } from "@/lib/schemas";
+import { CritiqueSchema, type CritiqueVerdict, type GeneratedQuestion, RepeatCheckSchema, SlotQuestionsSchema } from "@/lib/schemas";
 import {
   type BatchRow,
   type BatchView,
@@ -17,17 +17,20 @@ import {
   slotsWithSources,
 } from "./context";
 import {
+  answerText,
   critiquePrompt,
   critiqueSystem,
   draftPrompt,
   type ExamContext,
   generationSystem,
+  repeatCheckPrompt,
+  repeatCheckSystem,
   revisePrompt,
   type SlotWithSources,
 } from "./prompts";
 import { RunTimedOutError, runDeadline } from "./run-limit";
-import { findNearDuplicate } from "./similarity";
-import type { BatchStage, DraftSlot, SlotOutcome, SlotVerdict, StageMetrics } from "./types";
+import { findNearDuplicate, nearDuplicateSlots } from "./similarity";
+import type { BatchStage, DraftSlot, PlanSlot, SlotOutcome, SlotVerdict, StageMetrics } from "./types";
 import { normalizeQuestion, questionIssues } from "./validate";
 
 // Stage C, one batch at a time. Each call to runNextStage claims the batch, runs exactly
@@ -39,6 +42,8 @@ const STALE_CLAIM = sql`now() - interval '3 minutes'`;
 const MAX_CRITIQUE_ATTEMPTS = 2;
 /** A model call that fails this close to the run's end failed because the time ran out. */
 const RUN_END_MARGIN_MS = 10_000;
+/** Repeat checks per save, at most: another runs only if another batch saved during the last one. */
+const MAX_REPEAT_CHECKS = 3;
 
 export class BatchBusyError extends Error {
   override name = "BatchBusyError";
@@ -106,7 +111,7 @@ export async function runNextStage(
   };
   try {
     run.sources = await slotsWithSources(exam.plan.slots.filter((slot) => claimed.slotOrdinals.includes(slot.ordinal)));
-    run.existing = await excludedStems(exam, run.context);
+    run.existing = await excludedStems(exam, run.context, claimed.batchIndex);
     const result = await STAGES[claimed.stage as Exclude<BatchStage, "done" | "failed">](run);
     return batchView(await save(run, result), exam.plan);
   } catch (error) {
@@ -175,18 +180,11 @@ async function runCritique(run: StageRun): Promise<StageResult> {
   const valid = validDrafts(run.batch.drafts);
   const attempts = { ...run.batch.attempts, critique: (run.batch.attempts.critique ?? 0) + 1 };
 
-  // The word-overlap check: a stem too close to an existing one is sent back for revision.
+  // The word-overlap check: a stem too close to an existing one (including another batch's
+  // draft) or to an earlier one in this batch is sent back for revision.
   const automatic = new Map<number, string>();
-  const earlier: string[] = [];
-  for (const { slot, question } of valid) {
-    const duplicate = findNearDuplicate(question.prompt, [...run.existing, ...earlier]);
-    if (duplicate) {
-      automatic.set(
-        slot,
-        `Its stem is too close to an existing question ("${duplicate.text.slice(0, 120)}"). Rewrite it to test a different point from the material.`,
-      );
-    }
-    earlier.push(question.prompt);
+  for (const [slot, duplicate] of nearDuplicateSlots(valid.map(({ slot, question }) => ({ slot, prompt: question.prompt })), run.existing)) {
+    automatic.set(slot, `Its stem is too close to an existing question ("${duplicate.slice(0, 120)}"). Rewrite it to test a different point from the material.`);
   }
 
   const reviewed = valid.map(({ slot, question }) => ({ source: sourceFor(run, slot), draft: question }));
@@ -241,12 +239,13 @@ async function runRevise(run: StageRun): Promise<StageResult> {
     draft: run.batch.drafts.find((draft) => draft.slot === verdict.slot)!.question!,
     instructions: verdict.instructions,
   }));
+  // The batch's questions that passed are existing questions too, so a revision doesn't move onto their points.
+  const passed = run.batch.verdicts.filter((v) => v.verdict === "pass").map((v) => run.batch.drafts.find((d) => d.slot === v.slot)!.question!.prompt);
   const response = await callModel(run, "revise", SlotQuestionsSchema, generationSystemPrompt(run), [
-    { role: "user", content: revisePrompt(requests, run.existing, run.context.difficulty) },
+    { role: "user", content: revisePrompt(requests, [...run.existing, ...passed], run.context.difficulty) },
   ]);
   if ("failed" in response) return response.failed;
 
-  const passed = run.batch.verdicts.filter((v) => v.verdict === "pass").map((v) => run.batch.drafts.find((d) => d.slot === v.slot)!.question!.prompt);
   const accepted: string[] = [...passed];
   const drafts = [...run.batch.drafts];
   const outcomes: SlotOutcome[] = [...run.batch.outcomes];
@@ -286,7 +285,7 @@ type ModelResponse<T> = T | { error: string } | { failed: StageResult };
  */
 async function callModel<S extends z.ZodType>(
   run: StageRun,
-  stage: StageMetrics["stage"],
+  stage: Exclude<StageMetrics["stage"], "repeat_check">,
   schema: S,
   system: string,
   messages: PromptMessage[],
@@ -360,33 +359,64 @@ function failBatch(run: StageRun, error: string, extra: StageResult = {}): Stage
   return { ...extra, stage: "failed", error, outcomes };
 }
 
+interface Candidate {
+  slot: PlanSlot;
+  question: GeneratedQuestion;
+}
+
 /**
  * Stores the batch's accepted questions (passed critique, or revised and still valid) and
- * marks it done. Everything else in the batch is recorded as dropped.
+ * marks it done. Everything else in the batch is recorded as dropped, and so is a question
+ * that repeats one another batch saved first: a top-up batch replaces it. The batch's
+ * critique saw the other batches' drafts, but not what changed since (their revisions, or
+ * this batch's own), so before saving, the repeat check compares the new questions with
+ * the ones other batches saved. The first batch to land has nothing to compare with, so it
+ * makes no extra call.
  */
 async function finishBatch(run: StageRun, result: StageResult): Promise<StageResult> {
   const drafts = result.drafts ?? run.batch.drafts;
   const verdicts = result.verdicts ?? run.batch.verdicts;
   const outcomes = [...(result.outcomes ?? run.batch.outcomes)];
   const dropped = new Set(outcomes.filter((o) => o.status === "dropped").map((o) => o.slot));
+  const wasRevised = (ordinal: number) => verdicts.find((v) => v.slot === ordinal)?.verdict === "revise";
+  const drop = (ordinal: number, reason: string) => outcomes.push({ slot: ordinal, status: "dropped", revised: wasRevised(ordinal), reason });
 
-  const accepted = run.sources.flatMap(({ slot }) => {
+  let candidates: Candidate[] = run.sources.flatMap(({ slot }) => {
     const draft = drafts.find((d) => d.slot === slot.ordinal);
-    if (!draft?.question || dropped.has(slot.ordinal)) return [];
-    const revised = verdicts.find((v) => v.slot === slot.ordinal)?.verdict === "revise";
-    outcomes.push({ slot: slot.ordinal, status: "accepted", revised, reason: null });
-    return [{ slot, question: draft.question }];
+    return draft?.question && !dropped.has(slot.ordinal) ? [{ slot, question: draft.question }] : [];
   });
-  for (const ordinal of run.batch.slotOrdinals) {
-    if (!outcomes.some((o) => o.slot === ordinal)) {
-      outcomes.push({ slot: ordinal, status: "dropped", revised: false, reason: "No valid draft." });
-    }
-  }
 
-  if (accepted.length > 0) {
-    await db().transaction(async (tx) => {
+  const checked = new Set<string>();
+  let accepted: Candidate[] = [];
+  for (let round = 1; candidates.length > 0; round++) {
+    const unchecked = (await savedByOtherBatches(run)).filter((row) => !checked.has(row.id));
+    if (unchecked.length > 0) {
+      const repeats = await findRepeats(run, candidates, unchecked);
+      for (const [ordinal, reason] of repeats) drop(ordinal, reason);
+      candidates = candidates.filter(({ slot }) => !repeats.has(slot.ordinal));
+      for (const row of unchecked) checked.add(row.id);
+      if (candidates.length === 0) break;
+    }
+
+    const saved = await db().transaction(async (tx) => {
+      // One batch of an exam saves at a time, so two finishing together see each other.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`exam-questions:${run.exam.id}`}))`);
+      const rows = await tx.select({ id: questions.id, ordinal: questions.ordinal, prompt: questions.prompt }).from(questions).where(eq(questions.examId, run.exam.id));
+      const others = rows.filter((row) => !run.batch.slotOrdinals.includes(row.ordinal));
+      // Another batch saved during the repeat check: check against its questions too.
+      if (round < MAX_REPEAT_CHECKS && others.some((row) => !checked.has(row.id))) return null;
+
+      // The word-overlap check, which needs no model call, covers the last round.
+      const tooClose = nearDuplicateSlots(
+        candidates.map(({ slot, question }) => ({ slot: slot.ordinal, prompt: question.prompt })),
+        others.map((row) => row.prompt),
+      );
+      for (const [ordinal, duplicate] of tooClose) drop(ordinal, `Too close to another question in this mock ("${duplicate.slice(0, 80)}").`);
+      const kept = candidates.filter(({ slot }) => !tooClose.has(slot.ordinal));
+      if (kept.length === 0) return kept;
+
       await tx.insert(questions).values(
-        accepted.map(({ slot, question }) => ({
+        kept.map(({ slot, question }) => ({
           examId: run.exam.id,
           ordinal: slot.ordinal,
           type: question.type,
@@ -408,7 +438,7 @@ async function finishBatch(run: StageRun, result: StageResult): Promise<StageRes
           difficulty: question.difficulty,
         })),
       );
-      const used = accepted.flatMap(({ slot }) => [slot.chunkId, ...(slot.secondaryChunkId ? [slot.secondaryChunkId] : [])]);
+      const used = kept.flatMap(({ slot }) => [slot.chunkId, ...(slot.secondaryChunkId ? [slot.secondaryChunkId] : [])]);
       // One statement, so batches finishing at the same time can't lose each other's chunks.
       await tx
         .update(exams)
@@ -416,9 +446,91 @@ async function finishBatch(run: StageRun, result: StageResult): Promise<StageRes
           usedChunkIds: sql`(select coalesce(jsonb_agg(distinct value), '[]'::jsonb) from jsonb_array_elements(${exams.usedChunkIds} || ${JSON.stringify(used)}::jsonb))`,
         })
         .where(eq(exams.id, run.exam.id));
+      return kept;
     });
+    if (saved) {
+      accepted = saved;
+      break;
+    }
+  }
+
+  for (const { slot } of accepted) {
+    outcomes.push({ slot: slot.ordinal, status: "accepted", revised: wasRevised(slot.ordinal), reason: null });
+  }
+  for (const ordinal of run.batch.slotOrdinals) {
+    if (!outcomes.some((o) => o.slot === ordinal)) {
+      outcomes.push({ slot: ordinal, status: "dropped", revised: false, reason: "No valid draft." });
+    }
   }
   return { ...result, drafts, verdicts, outcomes: outcomes.sort((a, b) => a.slot - b.slot), stage: "done" };
+}
+
+/** The questions the exam's other batches have saved. */
+async function savedByOtherBatches(run: StageRun) {
+  const rows = await db()
+    .select({
+      id: questions.id,
+      ordinal: questions.ordinal,
+      type: questions.type,
+      prompt: questions.prompt,
+      options: questions.options,
+      correctOption: questions.correctOption,
+      expectedAnswer: questions.expectedAnswer,
+      numericAnswer: questions.numericAnswer,
+      unit: questions.unit,
+    })
+    .from(questions)
+    .where(eq(questions.examId, run.exam.id))
+    .orderBy(asc(questions.ordinal));
+  return rows.filter((row) => !run.batch.slotOrdinals.includes(row.ordinal));
+}
+
+/**
+ * The candidates that repeat one of `saved`, each with the reason to record. If the call
+ * fails, the batch saves without it (the word-overlap check still applies) rather than
+ * losing the stage's work.
+ */
+async function findRepeats(run: StageRun, candidates: Candidate[], saved: Awaited<ReturnType<typeof savedByOtherBatches>>): Promise<Map<number, string>> {
+  const fresh = candidates.map(({ slot, question }) => ({ number: slot.ordinal, type: question.type, prompt: question.prompt, answer: answerText(question) }));
+  const earlier = saved.map((row) => ({
+    number: row.ordinal,
+    type: row.type,
+    prompt: row.prompt,
+    answer: answerText({
+      type: row.type,
+      options: row.options,
+      correct_option: row.correctOption,
+      expected_answer: row.expectedAnswer,
+      numeric_answer: row.numericAnswer,
+      unit: row.unit,
+    }),
+  }));
+  let verdicts: z.output<typeof RepeatCheckSchema>["verdicts"];
+  try {
+    const result = await generateJson({
+      context: { label: "repeat_check", examId: run.exam.id, batch: run.batch.batchIndex },
+      schema: RepeatCheckSchema,
+      system: repeatCheckSystem(schemaText(RepeatCheckSchema)),
+      messages: [{ role: "user", content: repeatCheckPrompt(fresh, earlier) }],
+      task: "repeatCheck",
+      deadlineAt: run.deadlineAt,
+    });
+    run.metrics.push(stageMetrics("repeat_check", result.metrics, "ok"));
+    verdicts = result.data.verdicts;
+  } catch (error) {
+    if (!(error instanceof ModelCallError)) throw error;
+    run.metrics.push(stageMetrics("repeat_check", error.metrics, error.kind));
+    return new Map();
+  }
+
+  const repeats = new Map<number, string>();
+  for (const { slot, repeats: number, same_point } of verdicts) {
+    const repeated = saved.find((row) => row.ordinal === number);
+    if (!repeated || !candidates.some((candidate) => candidate.slot.ordinal === slot)) continue;
+    const point = same_point ? `: ${same_point.trim().replace(/\.$/, "")}` : "";
+    repeats.set(slot, `Repeats a question another batch saved first ("${repeated.prompt.slice(0, 80)}")${point}.`);
+  }
+  return repeats;
 }
 
 async function save(run: StageRun, result: StageResult): Promise<BatchRow> {

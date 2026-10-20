@@ -112,6 +112,19 @@ export const CritiqueSchema = z.object({
 export type Critique = z.infer<typeof CritiqueSchema>;
 export type CritiqueVerdict = Critique["verdicts"][number];
 
+/** The repeat check when a batch saves: for each new question, the saved question it repeats, if any. */
+export const RepeatCheckSchema = z.object({
+  verdicts: z.array(
+    z.object({
+      slot: z.number().int(),
+      /** The number of the saved question it tests the same point as; null if none. */
+      repeats: z.number().int().nullable(),
+      /** The point both test, when it repeats one. */
+      same_point: z.string().nullable(),
+    }),
+  ),
+});
+
 // ---------------------------------------------------------------- marking (stage D)
 
 /** Short-answer marking: marks per rubric point, in rubric order. */

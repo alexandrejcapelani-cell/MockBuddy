@@ -61,7 +61,8 @@ export interface SlotOutcome {
 
 /** One model call made by a stage (the call wrapper's metrics, plus the stage and outcome). */
 export interface StageMetrics {
-  stage: Exclude<BatchStage, "done" | "failed">;
+  /** The stage, or "repeat_check" for the check a batch runs as it saves. */
+  stage: Exclude<BatchStage, "done" | "failed"> | "repeat_check";
   label: string;
   /** The model requested for this call (lib/ai/config.ts). */
   model: string;

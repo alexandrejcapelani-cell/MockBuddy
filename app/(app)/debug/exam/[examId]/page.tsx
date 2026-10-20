@@ -163,7 +163,7 @@ export default async function ExamReviewPage({ params }: { params: Promise<{ exa
 }
 
 function TimingSummary({ metrics, wallClockMs }: { metrics: (StageMetrics & { batch: number })[]; wallClockMs: number }) {
-  const stages = ["draft", "draft_retry", "critique", "revise"] as const;
+  const stages = ["draft", "draft_retry", "critique", "revise", "repeat_check"] as const;
   const modelOf = (m: StageMetrics) => m.servedBy ?? m.model;
   // Runs recorded before the switch to Gemini have no thinking count.
   const thoughts = (calls: StageMetrics[]) => calls.reduce((sum, m) => sum + (m.thoughtTokens ?? 0), 0);

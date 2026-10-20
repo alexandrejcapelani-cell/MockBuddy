@@ -170,9 +170,10 @@ never weaken it). Where this section and older ones disagree, this one wins.
 - Batches of 5 run **in parallel** from the client (see Rate limits). `exams.plan` assigns
   every slot its type, section, marks and chunk(s) up front, so batches don't depend on
   each other. For the wall-clock target, see Timing.
-- Consequence, accepted: the draft call doesn't see stems from other batches of the same
-  exam. Cross-batch dedup relies on chunk rotation, a server-side word-overlap check and
-  the critique pass. Stems from the previous exam chain and the sample exam are still
+- Batches that draft at the same time can't see each other's drafts. Later stages can: every
+  stage's existing questions include the other unfinished batches' drafts, and a batch
+  re-checks its questions against the other batches' when it saves (see "Repeats across
+  parallel batches"). Stems from the previous exam chain and the sample exam are also
   passed in as exclusions.
 - Dropped questions (failed validation twice, or still failing after revise) are replaced
   by at most 2 extra batches, each through the full pipeline and drawn from unused chunks.
@@ -221,8 +222,8 @@ never weaken it). Where this section and older ones disagree, this one wins.
   own) so one wrapper owns retrying and can count it. Overloaded (503) and other 5xx
   responses use the same backoff.
 - On the free tier the daily request limit is likely to bind before the per-minute one.
-  A 20-question mock makes about 12 to 20 calls to the main model (4 batches × draft,
-  critique, revise, plus draft retries and top-ups), plus one blueprint per sample exam
+  A 20-question mock makes about 15 to 25 calls to the main model (4 batches × draft,
+  critique, revise, plus draft retries, repeat checks and top-ups), plus one blueprint per sample exam
   and one call per short or unreadable numerical answer. Topic labels use the lite model,
   which has its own quota.
 - Backoff never sleeps past the request's budget (290 s on Vercel). If the next wait would overrun it,
@@ -231,6 +232,14 @@ never weaken it). Where this section and older ones disagree, this one wins.
 - Each call logs one JSON line: exam id, batch, stage, attempts, 429 retries, total time
   spent waiting, and duration. The generate response returns the same numbers, and the
   phase 3 debug UI totals them per run, so you can see when limits are what slowed a batch.
+- Durations are wall-clock (`Date.now()`), the clock the run ceiling uses. So a call that
+  spans a laptop sleep logs the sleep too. One local revise logged `durationMs` 3,325,142
+  (outcome "deadline") next to `POST /api/generate 200 in 30032ms`. The lid was closed
+  30 s into the call (12:05:32 in `pmset -g log`) and the machine woke 55 minutes later.
+  The SDK's timeout fired on waking, past the run's deadline. The 30 s line is the browser
+  dropping the connection as the machine slept: Next.js logs a request when its socket
+  closes, and the status is the default 200 because the route hadn't answered yet. Not a
+  bug, and it can't happen on Vercel; nothing changed.
 
 ## Timing
 
@@ -407,6 +416,80 @@ never weaken it). Where this section and older ones disagree, this one wins.
 - Not covered: one sample exam and two short lecture files. A harder subject could still
   show a difference, so the A/B scripts' approach (planted flaws, same drafts at both
   levels) is the way to re-check if quality ever seems to drop.
+
+## Repeats across parallel batches (2026-10-20)
+
+- **What happened.** In a real 10-question mock, slot 2 (batch 1) and slot 6 (batch 2) both
+  asked what adding an irrelevant variable does to R². The two batches drafted at the same
+  time. Every stage's "existing questions" (in its prompt and in the word-overlap check)
+  were the sample exam's and the questions already *saved*, and a batch saves only when
+  it finishes. So neither batch's examiner or overlap check ever saw the other's question.
+- **1. Batches see each other's drafts.** Each stage's existing questions now also include
+  the valid, not dropped drafts of the mock's other unfinished batches (`inFlightStems`,
+  `lib/generation/existing.ts`). A batch saves its drafts before its critique starts, so of
+  any two batches the one whose critique starts second sees the other's drafts. That
+  batch's question is the one sent to revise, and the batch further ahead isn't slowed. In
+  a short window both can see each other and both revise; accepted. The batch's own passed
+  questions are now also listed in its revise prompt, so a revision doesn't move onto a
+  sibling's point.
+- **2. The repeat check when a batch saves.** Nothing reviews a revised question, and two
+  revisions running at the same time can't see each other. In the first test run, two
+  examiners suggested the same replacement topic and two revisions both wrote it. The
+  examiner also missed an MCQ and a written question on the same point. So before saving,
+  a batch now sends its new questions, with their keyed answers, and the questions other
+  batches have saved to one short call (`repeatCheck` in `lib/ai/config.ts`, low thinking,
+  usually 2 to 3 s and $0.003; one took 10 s with a single attempt and no thinking, which
+  is the API's own latency). Any repeat is dropped, and a top-up batch replaces it. The
+  first batch to land has nothing to compare with, so it makes no call. If another batch
+  saves during the check, the check runs again on those questions (at most 3 rounds), and
+  saving itself holds a per-mock advisory lock with a final word-overlap check, so two
+  batches saving together still see each other. If the call fails, the batch saves without
+  it rather than losing the stage's work.
+- **3. What "the same point" means** is now spelled out in the draft, critique, revise and
+  repeat-check prompts: the same fact, definition, distinction, formula, procedure or
+  calculation, whatever the format or scenario. A multiple-choice and a written question
+  on it are a repeat, and so are two calculations of the same quantity.
+- **The excluded stems' order.** They are capped at 60 for prompts. They used to be the
+  sample's and then every saved stem in the chain of mocks by ordinal, so after a few long
+  mocks this mock's own questions could fall off the end. Now: the sample's (an unchanged
+  prefix, for the prompt cache), this mock's saved, this mock's in-flight drafts, then
+  earlier mocks', nearest first.
+- **Not taken.**
+  - Giving each draft the other slots' planned topics or points: the plan holds topics and
+    chunks, not points, and drafts written at the same time can't agree on points without
+    seeing each other. Splitting a chunk into one part per slot would be deterministic, but
+    it narrows what each question can test, and it does nothing for the same idea in two
+    different chunks, which is the usual case with real material.
+  - A dedupe pass at finalize: questions stream into the exam as each batch lands, so by
+    then the student may have answered both, and removing one would pull it out from under
+    them. The repeat check is that pass, moved to before anyone sees the question.
+- **Tests:** `lib/generation/existing.test.ts` reproduces the case: two batches drafting at
+  once, where the critique of the batch that is behind sees only saved questions (as before)
+  and misses it. With the fix it sees the other batch's draft and sends its own slot back,
+  while the batch ahead keeps its question.
+- **Measured** (paid key, stand-in Supabase, the 2-chunk test material: one OLS lecture, one
+  on heteroskedasticity and IV, so 5 or 10 questions per chunk):
+
+  | Run | First batch landed | Whole run | Kept | Cross-batch repeats in the mock |
+  | --- | --- | --- | --- | --- |
+  | 20 questions, drafts visible only | 31 s | 77 s | 20/20 | 3 (IV conditions; omitted variable bias direction; Breusch-Pagan, three times) |
+  | 20 questions, with the repeat check | 31 s | 119 s | 19/20 | none |
+  | 10 questions, with the repeat check | 27 s | 60 s | 10/10 | none |
+
+  Seeing other batches' drafts already caught the reported case: the irrelevant-regressor
+  question was drafted three times in the first run, kept once, and the other two were sent
+  to revise. Of those two, one was caught by the examiner and one by the overlap check. In
+  the second run the critiques sent 8 questions back as repeats of other batches' drafts.
+  The repeat check then dropped 6 more, each a real repeat on reading. In one batch: one
+  question its examiner passed though it had seen the other batch's draft, and two
+  revisions that converged with other batches' revisions. In top-ups: three written
+  versions of saved MCQs. Each later batch paid one check (two for one batch, when another
+  saved during its check). Two top-ups couldn't find a 20th distinct point in 2 chunks, so
+  the mock shipped one short.
+  The questions left share topics (three on IV, two on omitted variable bias), but not
+  points. Real material has many more chunks, so this test is harsher than real use. The
+  10-question run reproduced the reported case: batch 2 drafted the irrelevant-regressor
+  question again, and its examiner sent it back, citing batch 1's draft.
 
 ## Sample exam
 

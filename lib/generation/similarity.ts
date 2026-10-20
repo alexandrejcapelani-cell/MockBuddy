@@ -48,3 +48,18 @@ export function findNearDuplicate(stem: string, others: string[]): { text: strin
   }
   return best;
 }
+
+/**
+ * The slots whose stem is too close to one of `existing` or to an earlier slot's in `drafts`,
+ * each with the stem it is too close to.
+ */
+export function nearDuplicateSlots(drafts: { slot: number; prompt: string }[], existing: string[]): Map<number, string> {
+  const found = new Map<number, string>();
+  const earlier: string[] = [];
+  for (const { slot, prompt } of drafts) {
+    const duplicate = findNearDuplicate(prompt, [...existing, ...earlier]);
+    if (duplicate) found.set(slot, duplicate.text);
+    earlier.push(prompt);
+  }
+  return found;
+}
