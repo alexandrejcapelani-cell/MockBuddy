@@ -274,8 +274,9 @@ never weaken it). Where this section and older ones disagree, this one wins.
   "minimal"; on this model "low" produced no thinking tokens at all). At "medium" one
   5-question draft took 95 s and then 159 s (10 to 19k thinking tokens): too slow and too
   unpredictable for a 3-minute run, and over a 40 s per-call target. At "low" drafts took
-  20 to 25 s across 5 calls. Critique, revise and grading stay at "medium", since they are
-  the checks; batch size stays 5, since 3 wasn't needed.
+  20 to 25 s across 5 calls. Critique, revise and grading stayed at "medium" here, since they
+  are the checks (critique and revise moved to "low" later: see "Critique and revise at low
+  thinking"); batch size stays 5, since 3 wasn't needed.
 - Measured on the paid key, same material and sample exam, through the app (stand-in
   Supabase):
 
@@ -360,11 +361,52 @@ never weaken it). Where this section and older ones disagree, this one wins.
   The first 5 questions were answerable 35 s after the pull, and 10 after 45 s; the whole
   mock took 151 s. 15/15 kept, 1 revised, 0 rate limits, about $0.17. Every call logged
   `billingTier: "paid"`.
-- **Still to decide: critique and revise at "medium" thinking.** Batch 3's critique used
-  9.7k thinking tokens and took 71.5 s, and its revise 48 s: both over the 40 s per-call
-  target, and together they put the run at 151 of its 180 s. Streaming means the student
-  isn't waiting on it, but a slower day would hit the ceiling and need Retry. CHANGES.md
-  2.6 suggests a faster model or lower thinking for the critique; not changed here.
+- Batch 3's critique at "medium" used 9.7k thinking tokens and took 71.5 s, and its revise
+  48 s, putting the run at 151 of its 180 s. Resolved in "Critique and revise at low
+  thinking" below.
+
+## Critique and revise at low thinking (2026-10-20)
+
+- **Critique and revise now use thinking level "low"**, like drafts. Grading stays at
+  "medium". The run ceiling stays at 3 minutes. The rule set before measuring: if the
+  examiner at low missed any problem it caught at medium, revert and raise the ceiling to 4
+  minutes instead. It missed none.
+- **How the examiner was checked.** One real 10-question draft set (2 batches) was copied,
+  and six known flaws were planted in it: a wrong key argued plausibly (robust standard
+  errors "change the coefficients"), an obvious filler distractor, placeholder
+  explanations ("This is incorrect."), a question needing material the chunk doesn't have
+  (Durbin-Watson), an arithmetic error in a numerical answer (1.68 / 2.80 keyed as 0.75),
+  and two questions in one batch testing the same point. Four drafts were left clean. The
+  same drafts went through the app's own critique stage twice at each level, then once
+  through revise:
+
+  | | Medium (2 runs) | Low (2 runs) |
+  | --- | --- | --- |
+  | Planted flaws caught | 6/6, 6/6 | 6/6, 6/6 |
+  | Clean drafts sent to revise | 0, 0 | 0, 0 |
+  | Critique time per batch | 16 to 41 s | 6 to 9 s |
+  | Flaws fixed by revise | 6/6 | 6/6 |
+  | Revise time per batch | 27 s, 46 s | 12 s, 17 s |
+
+  The examiner's instructions named the same specific problem at both levels (for
+  example "1.68 / 2.80 = 0.60, not 0.75"), and the revisions were alike: the same kind of
+  replacement distractor, explanations of similar length (202 and 210 characters on
+  average).
+- **Whole runs at low** (paid key, stand-in Supabase, batches in parallel):
+
+  | Run | Slowest call | All batches saved | Revised | Cost |
+  | --- | --- | --- | --- | --- |
+  | 15 questions, medium (before) | 71.5 s (critique) | 151 s | 1 | $0.17 |
+  | 10 questions, low | 27.9 s (draft) | about 33 s | 0 | $0.06 |
+  | 15 questions, low | 29.0 s (draft) | 40 s | 3 | $0.11 |
+
+  In the 15-question run the examiner sent back a question whose reasoning the chunk
+  didn't support and one repeating a sample question's calculation; the word-overlap
+  check caught a third that was too close to the previous mock. Every call stayed under
+  the 40 s target, and the first 5 questions were answerable at 35 s.
+- Not covered: one sample exam and two short lecture files. A harder subject could still
+  show a difference, so the A/B scripts' approach (planted flaws, same drafts at both
+  levels) is the way to re-check if quality ever seems to drop.
 
 ## Sample exam
 

@@ -24,15 +24,16 @@ export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 /**
  * Thinking level per call. Set explicitly: the defaults differ by model. The blueprint runs
  * once per sample exam and shapes every mock after it, so it gets the most thinking.
- * Drafts use the lowest level gemini-3.8-flash allows: at medium, one 5-question draft took
- * 95 to 160 s (10 to 19k thinking tokens); the critique and revise passes check the result.
+ * Drafts, critique and revise use the lowest level gemini-3.8-flash allows. At medium a
+ * 5-question draft took 95 to 160 s and a critique up to 72 s; at low the examiner caught
+ * the same planted flaws as at medium (docs/DECISIONS.md, "Critique and revise at low").
  */
 export const THINKING: Record<ModelTask, ThinkingLevel> = {
   topicLabels: "low",
   blueprint: "high",
   draft: "low",
-  critique: "medium",
-  revise: "medium",
+  critique: "low",
+  revise: "low",
   grading: "medium",
 };
 

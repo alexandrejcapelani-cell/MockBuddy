@@ -125,7 +125,7 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
   };
   const finish = (outcome: string, extra: Record<string, unknown> = {}) => {
     metrics.durationMs = Date.now() - started;
-    console.log(JSON.stringify({ event: "model_call", outcome, task: call.task, ...call.context, ...metrics, ...extra }));
+    console.log(JSON.stringify({ event: "model_call", outcome, task: call.task, thinking: THINKING[call.task], ...call.context, ...metrics, ...extra }));
   };
 
   let interaction: Interaction;
