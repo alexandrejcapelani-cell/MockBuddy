@@ -61,6 +61,9 @@ never weaken it). Where this section and older ones disagree, this one wins.
 - **Vercel limits.** Hobby with Fluid compute (on by default) allows 300 s per function,
   so the AI routes export `maxDuration = 300` and stop themselves 10 s before it. The old
   60 s worry is gone, though sequential batches still make a whole mock take minutes.
+- **Functions run in Dublin** (`vercel.json`, `"regions": ["dub1"]`), next to Supabase in
+  eu-west-1. Vercel's default is Washington, D.C., which put every database query across
+  the Atlantic.
 - **The waitlist is removed** (table, route and form): with real sign-up it duplicated the
   one Sign up button and held email addresses for no remaining purpose.
 - **Gemini terms, now directly relevant:** the deployed app calls Gemini with the owner's
@@ -636,5 +639,19 @@ Each lands in its own reviewed migration when the phase that needs it starts.
   - On `/app`, the "20" count chip sat alone on a second row. Phones now get a 4-column
     row of chips that fill their cells, up to 3.5rem.
   - The "Your material" heading wrapped beside its count; the count now drops below it.
-- **Known issue, not fixed:** a material row says "1 chunks"
-  (`app/(app)/app/page.tsx`, the material list).
+- A material row said "1 chunks"; fixed in the pre-submission pass below.
+- **Pre-submission pass (2026-10-21).** Fixed after the audit against CLAUDE.md,
+  ASSIGNMENT.md and CHANGES.md:
+  - Students never see an HTTP status. A response with no message of its own (a crash,
+    or Vercel stopping a request) reads "Something went wrong on our side. Try again in a
+    moment." (`lib/upload-client.ts`).
+  - Model errors no longer show Google's wording or hints for the site owner ("Google
+    said: …", "Site owner: …", "Check MODELS…"). Those go to the `model_call` log line
+    as `detail` (`lib/ai/errors.ts`).
+  - In-app 404s (a missing exam or subject, or someone else's) render under the app's
+    own header (`app/(app)/not-found.tsx`), so there is one header and one logout button.
+    The crash page (`app/error.tsx`) has a header with a logout button whenever a session
+    cookie exists.
+  - "1 chunk", and a finished blueprint says how long it took, without the model and cost.
+  - The CHANGES.md items not built (2.2 right lane, 2.4 fallback model, 2.5 Retry button,
+    2.7 .pptx/.docx, 3.1 waits) stay unbuilt for submission.

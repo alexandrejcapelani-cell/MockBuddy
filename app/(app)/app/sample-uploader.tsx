@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DropZone } from "@/components/drop-zone";
-import { type CallSummaryInput, summarizeCalls } from "@/lib/ai/pricing";
+import type { CallSummaryInput } from "@/lib/ai/pricing";
 import { postJson, uploadFile } from "@/lib/upload-client";
 
 type Phase = "idle" | "uploading" | "reading" | "done" | "failed";
@@ -36,7 +36,9 @@ export function SampleUploader({ subjectId, hasBlueprint }: { subjectId: string;
       return;
     }
     setPhase("done");
-    setMessage(summarizeCalls(result.data.calls));
+    // How long it took is useful to a student; the model and cost are in the server log.
+    const seconds = result.data.calls.reduce((sum, call) => sum + call.durationMs, 0) / 1000;
+    setMessage(`read in ${Math.max(1, Math.round(seconds))} s`);
     router.refresh();
   }
 

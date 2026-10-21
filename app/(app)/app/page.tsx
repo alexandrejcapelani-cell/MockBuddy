@@ -113,7 +113,7 @@ async function SubjectTable({ subjectId, subjectName, freeMocksLeft }: { subject
                     <p className="font-semibold break-all text-cream">{material.filename}</p>
                     <p className="text-dim">
                       {material.pageCount !== null && `${material.pageCount} pages · `}
-                      {material.chunkCount} chunks · {statusText(material.status)}
+                      {material.chunkCount} chunk{material.chunkCount === 1 ? "" : "s"} · {statusText(material.status)}
                     </p>
                     {material.error && (
                       <p role="alert" className="text-error">

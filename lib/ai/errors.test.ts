@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { classifyApiError } from "./errors.ts";
+import { classifyApiError, MISSING_KEY_MESSAGE } from "./errors.ts";
 
 const SECRET = "AQ.Ab8RN6test-server-key-0123456789";
 const counts = { attempts: 6, retries429: 5 };
@@ -40,10 +40,24 @@ describe("classifyApiError", () => {
     }
   });
 
-  test("Google's reason is quoted, but HTTP codes stay out of the message", () => {
+  test("Google's reason goes to the log, and neither it nor the HTTP code is in the student's message", () => {
     const result = classify(apiError(401, "UNAUTHENTICATED", "Request had invalid authentication credentials."));
-    assert.match(result.message, /Google said: Request had invalid authentication credentials\./);
-    assert.doesNotMatch(result.message, /HTTP|401/);
+    assert.equal(result.detail, "Request had invalid authentication credentials.");
+    assert.doesNotMatch(result.message, /Google said|authentication credentials|HTTP|401/);
+  });
+
+  test("no student-facing message carries text meant for the site owner", () => {
+    const messages = [
+      MISSING_KEY_MESSAGE,
+      classify(new Error("Ephemeral tokens are only supported by the live API.")).message,
+      classify(apiError(403, "PERMISSION_DENIED", "Your API key was reported as leaked. Please use another API key.")).message,
+      classify(apiError(403, "PERMISSION_DENIED", "Method doesn't allow unregistered callers.")).message,
+      classify(apiError(429, "RESOURCE_EXHAUSTED", QUOTA_MESSAGE, [quotaFailure("GenerateRequestsPerDayPerProjectPerModel-FreeTier")])).message,
+      classify(apiError(400, "FAILED_PRECONDITION", "Gemini API free tier is not available in your country. Please enable billing on your project in Google AI Studio.")).message,
+      classify(apiError(404, "NOT_FOUND", "models/gemini-9 is not found.")).message,
+      classify(apiError(400, "INVALID_ARGUMENT", "Request contains an invalid argument.")).message,
+    ];
+    for (const message of messages) assert.doesNotMatch(message, /Google said|Site owner|GEMINI_API_KEY|lib\/|MODELS|HTTP|\b[45]\d\d\b/, message);
   });
 
   test("an ephemeral Live-API token, refused by the SDK before sending, is an invalid key", () => {
@@ -90,7 +104,7 @@ describe("classifyApiError", () => {
   test("503 is overloaded, other 5xx unavailable, 404 names the model config, other 400s are API errors", () => {
     assert.equal(classify(apiError(503, "UNAVAILABLE", "The model is overloaded.")).kind, "overloaded");
     assert.equal(classify(apiError(500, "INTERNAL", "Internal error.")).kind, "unavailable");
-    assert.match(classify(apiError(404, "NOT_FOUND", "models/gemini-9 is not found.")).message, /lib\/ai\/config\.ts/);
+    assert.match(classify(apiError(404, "NOT_FOUND", "models/gemini-9 is not found.")).detail ?? "", /lib\/ai\/config\.ts/);
     assert.equal(classify(apiError(400, "INVALID_ARGUMENT", "Request contains an invalid argument.")).kind, "api");
     assert.doesNotMatch(classify(apiError(503, "UNAVAILABLE", "The model is overloaded.")).message, /503|HTTP/);
   });
@@ -105,8 +119,10 @@ describe("classifyApiError", () => {
   test("messages never contain the key, even when Google's own message quotes it", () => {
     const quoted = classify(apiError(403, "PERMISSION_DENIED", `Permission denied: Consumer 'api_key:${SECRET}' has been suspended.`));
     assert.ok(!quoted.message.includes(SECRET), quoted.message);
+    assert.ok(!quoted.detail?.includes(SECRET), quoted.detail);
     const bare = classify(apiError(400, "INVALID_ARGUMENT", `The key ${SECRET} is invalid.`, [{ reason: "API_KEY_INVALID" }]));
     assert.ok(!bare.message.includes(SECRET), bare.message);
+    assert.ok(!bare.detail?.includes(SECRET), bare.detail);
     const unknown = classifyApiError(apiError(403, "PERMISSION_DENIED", "Consumer 'api_key:AQ.Ab8otherkey123' has been suspended."), counts)!;
     assert.ok(!unknown.message.includes("AQ.Ab8otherkey123"), unknown.message);
   });

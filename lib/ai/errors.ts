@@ -36,10 +36,11 @@ export interface ClassifiedError {
   httpStatus?: number;
   /** For the server log only: which Google quota a 429 hit (e.g. …PerMinute…, …PerDay…). */
   quotaIds?: string[];
+  /** For the server log only: Google's own reason (key cut out) and any hint for the site owner. */
+  detail?: string;
 }
 
-export const MISSING_KEY_MESSAGE =
-  "MockBuddy's AI isn't set up on this server yet, so generating and marking are unavailable. (Site owner: set GEMINI_API_KEY.)";
+export const MISSING_KEY_MESSAGE = "MockBuddy's AI isn't set up on this server yet, so generating and marking are unavailable.";
 
 /** Google rejected the server's key: nothing the student can fix. */
 const KEY_PROBLEM =
@@ -69,43 +70,46 @@ interface SdkHttpError extends Error {
 /**
  * Null when `error` is not an error from the Gemini SDK. `secret` is the server's API key,
  * cut out of anything Google echoes back. Messages are for students: they say what went
- * wrong and what to do, and keep HTTP codes to the logs. The key belongs to the site, so a
- * key problem is never presented as the student's to fix.
+ * wrong and what to do. HTTP codes, Google's own wording and hints for the site owner go to
+ * the logs only (`httpStatus`, `detail`). The key belongs to the site, so a key problem is
+ * never presented as the student's to fix.
  */
 export function classifyApiError(error: unknown, context: { attempts: number; retries429: number }, secret?: string): ClassifiedError | null {
   if (!(error instanceof Error)) return null;
   // The SDK refuses Live-API ephemeral tokens (auth_tokens/…) itself, before sending anything.
   if (/ephemeral tokens are only supported/i.test(error.message)) {
-    return { kind: "invalid_key", message: `${KEY_PROBLEM} (GEMINI_API_KEY is an ephemeral Live-API token, not an API key.)` };
+    return { kind: "invalid_key", message: KEY_PROBLEM, detail: "GEMINI_API_KEY is an ephemeral Live-API token, not an API key." };
   }
   if (error.name === "APIConnectionTimeoutError") return { kind: "unavailable", message: "The AI service took too long to answer. Try again." };
   if (error.name === "APIConnectionError" || error.name === "APIUserAbortError") {
     return { kind: "unavailable", message: "Couldn't reach the AI service. Check your connection and try again." };
   }
   if (!isHttpError(error)) return null;
-  const classified = classifyHttpError(error, context, secret);
+  const detail = redactKey(rpcStatus(error).message ?? error.message, secret);
+  const classified = classifyHttpError(error, context, detail);
   const quotaIds = (rpcStatus(error).details ?? []).flatMap((d) => d.violations ?? []).flatMap((v) => (v.quotaId ? [v.quotaId] : []));
-  return { ...classified, httpStatus: error.status, ...(quotaIds.length > 0 ? { quotaIds } : {}) };
+  return { detail: firstLine(detail), ...classified, httpStatus: error.status, ...(quotaIds.length > 0 ? { quotaIds } : {}) };
 }
 
-function classifyHttpError(error: SdkHttpError, context: { attempts: number; retries429: number }, secret?: string): ClassifiedError {
+/** `detail` is Google's message with the key already cut out. */
+function classifyHttpError(error: SdkHttpError, context: { attempts: number; retries429: number }, detail: string): ClassifiedError {
   const rpc = rpcStatus(error);
-  const detail = redactKey(rpc.message ?? error.message, secret);
   const reasons = (rpc.details ?? []).flatMap((d) => (d.reason ? [d.reason] : []));
   const quotaIds = (rpc.details ?? []).flatMap((d) => d.violations ?? []).flatMap((v) => (v.quotaId ? [v.quotaId] : []));
   const retryAfter = retryDelayMs(rpc) ?? retryAfterMs(error.headers);
-  const google = `Google said: ${firstLine(detail)}`;
+  const google = firstLine(detail);
 
   if (error.status === 401 || reasons.some((r) => r.startsWith("API_KEY_")) || /api key not valid|api key expired/i.test(detail)) {
-    return { kind: "invalid_key", message: `${KEY_PROBLEM} ${google}` };
+    return { kind: "invalid_key", message: KEY_PROBLEM };
   }
   if (/leaked/i.test(detail)) {
-    return { kind: "invalid_key", message: `${KEY_PROBLEM} (Google blocked the key as leaked; it needs replacing.)` };
+    return { kind: "invalid_key", message: KEY_PROBLEM, detail: `${google} (Google blocked the key as leaked; it needs replacing.)` };
   }
   if (error.status === 403) {
     return {
       kind: "invalid_key",
-      message: `${KEY_PROBLEM} ${google} (Google rejects unrestricted standard keys and long-unused ones; the key's project may also lack the Gemini API.)`,
+      message: KEY_PROBLEM,
+      detail: `${google} (Google rejects unrestricted standard keys and long-unused ones; the key's project may also lack the Gemini API.)`,
     };
   }
 
@@ -119,7 +123,7 @@ function classifyHttpError(error: SdkHttpError, context: { attempts: number; ret
         : daily
           ? "MockBuddy has used up today's AI allowance. It resets at midnight Pacific time (09:00 in Spain), so try again then"
           : "MockBuddy has reached its AI spending limit for now";
-      return { kind: "quota_exceeded", message: `${why}. Everything you've made is saved. ${google}` };
+      return { kind: "quota_exceeded", message: `${why}. Everything you've made is saved.` };
     }
     return {
       kind: "rate_limited",
@@ -129,16 +133,20 @@ function classifyHttpError(error: SdkHttpError, context: { attempts: number; ret
   }
 
   if (error.status === 400 && rpc.status === "FAILED_PRECONDITION" && /free tier|billing/i.test(detail)) {
-    return { kind: "quota_exceeded", message: `MockBuddy's AI plan isn't available from this region right now. ${google}` };
+    return { kind: "quota_exceeded", message: "MockBuddy's AI plan isn't available from this region right now. Everything you've made is saved." };
   }
   if (error.status === 503) {
     return { kind: "overloaded", message: "The AI model is overloaded right now. Wait a moment and try again.", retryAfterMs: retryAfter };
   }
   if (error.status >= 500) return { kind: "unavailable", message: "The AI service had a problem. Try again in a moment.", retryAfterMs: retryAfter };
   if (error.status === 404) {
-    return { kind: "api", message: `The AI model MockBuddy asked for isn't available. ${google} (Check MODELS in lib/ai/config.ts.)` };
+    return {
+      kind: "api",
+      message: "The AI model MockBuddy uses isn't available right now. Everything you've made is saved; try again later.",
+      detail: `${google} (Check MODELS in lib/ai/config.ts.)`,
+    };
   }
-  return { kind: "api", message: `The AI service refused the request. ${google}` };
+  return { kind: "api", message: "The AI service couldn't handle this request. Try again in a moment." };
 }
 
 function isHttpError(error: Error): error is SdkHttpError {

@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { LogoutButton } from "@/components/logout-button";
+import { NotFoundPanel } from "@/components/not-found-panel";
 
-/** Also used for other users' exams and subjects, which answer exactly like missing ones. */
+/**
+ * A URL that matches no page. Inside the app (an exam or subject that is missing, or someone
+ * else's), app/(app)/not-found.tsx answers instead, under the app's own header.
+ */
 export default function NotFound() {
   return (
     <>
@@ -11,15 +15,7 @@ export default function NotFound() {
         </Link>
         <LogoutButton />
       </header>
-      <main className="mx-auto max-w-xl px-4 py-16">
-        <div className="panel space-y-4 p-6">
-          <h1 className="font-display text-3xl font-bold text-gold-text">Not on this table</h1>
-          <p>That page doesn&rsquo;t exist, or it isn&rsquo;t yours.</p>
-          <Link href="/app" className="btn-gold inline-block no-underline">
-            Back to the table
-          </Link>
-        </div>
-      </main>
+      <NotFoundPanel />
     </>
   );
 }

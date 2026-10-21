@@ -41,6 +41,15 @@ async function sendJson<T>(url: string, init: RequestInit, options: { timeoutMs?
   return readJson<T>(response);
 }
 
+/**
+ * For a response with no message of its own (a crash, or the host stopping a request that
+ * ran too long): a plain sentence, never a bare HTTP status. `status` stays on the result
+ * for code that needs it.
+ */
+function failureMessage(status: number): string {
+  return status >= 500 ? "Something went wrong on our side. Try again in a moment." : "That didn't work. Reload the page and try again.";
+}
+
 async function readJson<T>(response: Response): Promise<JsonResult<T>> {
   const text = await response.text();
   let data: Record<string, unknown> = {};
@@ -48,11 +57,11 @@ async function readJson<T>(response: Response): Promise<JsonResult<T>> {
     try {
       data = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      return { ok: false, status: response.status, error: `The server answered ${response.status} with a non-JSON body.`, data };
+      return { ok: false, status: response.status, error: failureMessage(response.status), data };
     }
   }
   if (!response.ok) {
-    const error = typeof data.error === "string" ? data.error : `The server answered ${response.status}.`;
+    const error = typeof data.error === "string" ? data.error : failureMessage(response.status);
     return { ok: false, status: response.status, error, data };
   }
   return { ok: true, data: data as T };

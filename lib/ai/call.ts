@@ -51,7 +51,15 @@ export class ModelCallError extends Error {
     readonly kind: ModelFailureKind,
     message: string,
     readonly metrics: CallMetrics,
-    readonly details: { issues?: string[]; rawText?: string; retryAfterMs?: number; httpStatus?: number; quotaIds?: string[] } = {},
+    readonly details: {
+      issues?: string[];
+      rawText?: string;
+      retryAfterMs?: number;
+      httpStatus?: number;
+      quotaIds?: string[];
+      /** For the log only: Google's own reason, or a hint for the site owner. */
+      detail?: string;
+    } = {},
   ) {
     super(message);
   }
@@ -138,6 +146,7 @@ export async function generateJson<S extends z.ZodType>(call: JsonCall<S>): Prom
         httpStatus: error.details.httpStatus,
         quotaIds: error.details.quotaIds,
         retryAfterMs: error.details.retryAfterMs,
+        detail: error.details.detail,
       });
     } else {
       finish("unexpected_error", { error: error instanceof Error ? error.message : String(error) });
@@ -291,7 +300,7 @@ async function sendWithRetries<S extends z.ZodType>(call: JsonCall<S>, metrics: 
 }
 
 function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metrics: CallMetrics): ModelCallError {
-  if (error instanceof ConfigError) return new ModelCallError("missing_key", MISSING_KEY_MESSAGE, metrics);
+  if (error instanceof ConfigError) return new ModelCallError("missing_key", MISSING_KEY_MESSAGE, metrics, { detail: error.message });
   if (
     error instanceof Error &&
     error.name === "APIConnectionTimeoutError" &&
@@ -306,6 +315,7 @@ function classify<S extends z.ZodType>(error: unknown, call: JsonCall<S>, metric
     retryAfterMs: classified.retryAfterMs,
     httpStatus: classified.httpStatus,
     quotaIds: classified.quotaIds,
+    detail: classified.detail,
   });
 }
 
